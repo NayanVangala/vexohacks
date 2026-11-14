@@ -10,6 +10,17 @@ it with a tap, a pinch, or your voice.
 - **Money, safely.** Gemini reads the receipt, hears "I'll pay you back half", and *proposes* a
   $12 request. Nothing reaches Stripe until you approve it; then the other person scans a QR on
   your phone and pays.
+- **Notices the situation.** Looking at slides or sitting in a meeting, Scene offers to take notes, then
+  returns a summary, decisions, slides and action items (and drafts the follow-up email and calendar event).
+- **An agent that does errands, and asks first.** "Hey Scene, order me a Big Mac from McDonald's" finds the
+  nearest McDonald's (Gemini + Google Maps), confirms it, reads the live menu, builds the cart and pays through
+  Stripe (test mode) with a pinch. "Email Maya", "tell Maya on Slack I'm late", "put this on my calendar" and
+  "search up the best GoPros" work the same way: Scene drafts, you approve, then it acts.
+- **Nothing happens behind your back.** Emails, Slack messages, calendar events and payments are drafts until
+  you pinch Send. Every promise needs a verbatim quote; recipients come from your contacts, never from the model.
+
+**Sponsor tracks:** Best Overall · Best Use of Gemini 4 · Best Economic Agent (Stripe) · Best ElevenLabs Project.
+**Quick start for judges:** `docs/DEMO.md` (the live script) and `scripts/preflight.sh` (checks keys, services, tunnel).
 
 Built at VexoHacks (Nov 14, 2026). The glasses-to-laptop streaming bridge was set up before the
 event; memory, payments, voice, the glasses display, the phone app, and the open device API were

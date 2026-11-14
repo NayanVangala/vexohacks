@@ -30,7 +30,7 @@ def env(monkeypatch, tmp_path):
 
 def start(now=1000.0):
     lead.offer(BOTTLE, "On the table. Want me to lead you there?", now)
-    return now + 30        # past the voice's own talking time, inside the answer window
+    return now + 10        # past the voice's own talking time, inside the answer window
 
 
 def test_own_voice_and_chatter_never_answer_the_offer(env):
@@ -91,6 +91,6 @@ def test_voice_flow_offer_then_yes_then_stop(env, monkeypatch):
     lead.offer(BOTTLE, "x", 1.0)               # long ago: window closed
     assert memory._lead_audio("yes") is False or not lead.active()
     lead.stop()
-    lead.offer(BOTTLE, "x", __import__("time").time() - 20)
+    lead.offer(BOTTLE, "x", __import__("time").time() - 8)
     assert memory._lead_audio("yes") and lead.active() and "tell you which way" in spoken[-1]
     assert memory._lead_audio("stop") and not lead.active()

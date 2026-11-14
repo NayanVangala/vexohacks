@@ -17,8 +17,11 @@ MENU = [{"id": "big-mac", "name": "Big Mac", "price_cents": 899, "calories": 580
         {"id": "qpc", "name": "Quarter Pounder with Cheese", "price_cents": 849, "calories": 520, "protein_g": 30}]
 
 
-def call(name, **args):
-    return {"text": None, "call": {"name": name, "args": args}, "parts": [{"functionCall": {"name": name, "args": args}}]}
+CONTACTS = {"maya": {"name": "Maya Patel", "email": "maya@example.com"}}
+
+
+def call(_tool, **args):
+    return {"text": None, "call": {"name": _tool, "args": args}, "parts": [{"functionCall": {"name": _tool, "args": args}}]}
 
 
 def text(t):
@@ -31,11 +34,13 @@ class Rig:
         self.agent = agent_mod.Agent(
             step=self.step, say=self.said.append, push=lambda *a: self.pushed.append(a), where=lambda: where, sync=True,
             find=lambda q, w: PLACES, menu=self.menu, propose=self.propose,
-            draft_email=self.draft_email, draft_event=self.draft_event, search=self.search)
+            draft_email=self.draft_email, draft_event=self.draft_event, search=self.search,
+            find_contact=lambda n: CONTACTS.get((n or "").strip().lower()))
         self.emails, self.events, self.searches = [], [], []
 
-    def draft_email(self, to_name, subject, body, quote):
-        d = {"id": 11, "to_name": to_name, "subject": subject, "body": body, "quote": quote}
+    def draft_email(self, to_name, subject, body, quote, to=None):
+        d = {"id": 11, "to_name": to_name, "subject": subject, "body": body, "quote": quote, "to": to or "demo@example.com",
+             "to_is_contact": bool(to)}
         self.emails.append(d)
         return d
 
@@ -167,7 +172,7 @@ def test_send_email_makes_a_draft_card_and_ends_the_session():
     r = Rig([call("send_email", to="Priya", subject="Budget", body="Hi Priya, sending the budget Friday.")])
     r.agent.start("hey scene email Priya about the budget")
     assert r.emails == [{"id": 11, "to_name": "Priya", "subject": "Budget", "body": "Hi Priya, sending the budget Friday.",
-                         "quote": "hey scene email Priya about the budget"}]
+                         "quote": "hey scene email Priya about the budget", "to": "demo@example.com", "to_is_contact": False}]
     kind, title, body, ref = r.pushed[-1]
     assert (kind, title, ref) == ("email", "Email Priya?", 11) and "Budget" in body
     assert r.agent.state()["status"] == "done" and any("send" in s.lower() for s in r.said)
@@ -223,3 +228,49 @@ def test_system_prompt_has_todays_date_and_lists_every_tool():
     names = {t["name"] for t in agent_mod.TOOLS}
     assert {"find_nearby", "get_menu", "ask_user", "propose_order", "rank_menu", "send_email",
             "add_calendar_event", "web_search"} <= names
+
+
+# ---- contacts and the scheduling link ----
+
+def test_email_to_a_saved_contact_uses_their_real_address_and_the_card_shows_it():
+    r = Rig([call("send_email", to="Maya", subject="Deck", body="Hi Maya, deck attached.")])
+    r.agent.start("email maya the deck")
+    assert r.emails[0]["to"] == "maya@example.com" and r.emails[0]["to_name"] == "Maya Patel"
+    kind, title, body, ref = r.pushed[-1]
+    assert title == "Email Maya Patel?" and "maya@example.com" in body
+
+
+def test_email_to_an_unknown_name_goes_to_the_demo_inbox_and_the_card_says_so():
+    r = Rig([call("send_email", to="Priya", subject="Hi", body="Hello.")])
+    r.agent.start("email priya")
+    assert r.emails[0]["to"] == "demo@example.com" and "no contact saved" in r.pushed[-1][2].lower()
+
+
+def test_the_model_can_never_choose_an_email_address():
+    r = Rig([call("send_email", to="evil@attacker.com", subject="Hi", body="Hello.")])
+    r.agent.start("email someone")
+    assert r.emails[0]["to"] == "demo@example.com" and r.emails[0]["to_is_contact"] is False
+
+
+def test_lookup_contact_tool():
+    r = Rig([call("lookup_contact", name="maya"), call("lookup_contact", name="zed"), text("ok")])
+    r.agent.start("who is maya")
+    assert "maya@example.com" in str(r.steps[1]) and "no contact" in str(r.steps[2]).lower()
+
+
+def test_scheduling_link_email_contains_the_link_and_goes_to_the_contact(monkeypatch):
+    monkeypatch.setenv("SCHEDULING_LINK", "https://calendly.com/me/30min")
+    monkeypatch.setenv("WEARER_NAME", "Srijan Saha")
+    r = Rig([call("send_scheduling_link", to="Maya", note="Want to find a time for the demo?")])
+    r.agent.start("find a time to meet with maya")
+    e = r.emails[0]
+    assert e["to"] == "maya@example.com" and "https://calendly.com/me/30min" in e["body"] and "demo" in e["body"]
+    assert e["body"].startswith("Hi Maya") and e["body"].rstrip().endswith("Srijan") and e["subject"]
+    assert r.pushed[-1][0] == "email" and r.agent.state()["status"] == "done"
+
+
+def test_scheduling_link_missing_is_reported(monkeypatch):
+    monkeypatch.delenv("SCHEDULING_LINK", raising=False)
+    r = Rig([call("send_scheduling_link", to="Maya"), text("I don't have a scheduling link set up.")])
+    r.agent.start("send maya my calendly")
+    assert r.emails == [] and "scheduling link" in str(r.steps[-1]).lower()

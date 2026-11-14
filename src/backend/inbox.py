@@ -36,8 +36,8 @@ def items() -> list[dict]:
                     "actions": [_act("Yes", "/agent/reply", {"text": "yes"}, primary=True), _act("No", "/agent/reply", {"text": "no"})]})
     for d in outbox.pending():
         if d["kind"] == "email":
-            out.append({"type": "email", "id": d["id"], "title": f"Email {d['to_name'] or 'them'}?", "ts": d["ts"],
-                        "body": f"{d['subject']}: {d['body']}",
+            title, body = outbox.card_text(d)
+            out.append({"type": "email", "id": d["id"], "title": title, "ts": d["ts"], "body": body,
                         "actions": [_act("Send", f"/emails/{d['id']}/send", primary=True), _act("Not now", f"/emails/{d['id']}/dismiss")]})
         else:
             out.append({"type": "event", "id": d["id"], "title": "Add to calendar?", "ts": d["ts"],

@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 import agent as agent_mod
+import contacts
 import httpx
 import outbox
 import models
@@ -353,8 +354,10 @@ def finish_notes() -> int | None:
     for a in out["action_items"]:
         tid = add("task", a["text"], status="open")
         if a.get("action") == "email":  # still a task, but the lens offers to send the email
-            d = outbox.draft(a.get("to", ""), a["subject"], a["body"], a["quote"])
-            push_card("email", f"Email {d['to_name'] or 'them'}?", f"{d['subject']}: {d['body']}", ref=d["id"])
+            c = contacts.find(a.get("to", ""))
+            d = outbox.draft(c["name"] if c else a.get("to", ""), a["subject"], a["body"], a["quote"], to=c["email"] if c else None)
+            title, text = outbox.card_text(d)
+            push_card("email", title, text, ref=d["id"])
         elif a.get("action") == "calendar":
             d = outbox.draft_event(a["text"], a["start"], a["duration_min"], a["quote"])
             when = datetime.strptime(a["start"], "%Y-%m-%dT%H:%M").strftime("%a %b %-d, %-I:%M %p")

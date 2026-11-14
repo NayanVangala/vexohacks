@@ -107,6 +107,12 @@ same agent that does ordering (`agent.py`); anything else ("where are my keys?")
 `DEMO_EMAIL_TO` only; a missing day or time makes the agent ask first), and `web_search` (Gemini + Google Search,
 `GEMINI_SEARCH_MODEL`, about 2 s) answers in one or two spoken sentences with the details and sources on a card.
 
+**Contacts and scheduling.** `contacts.json` (copy `src/backend/contacts.example.json` to `data/contacts.json`, or
+`POST /contacts`) maps names to emails. The model only supplies a name; the address comes from the file, so a
+hallucinated address can't be used. Unknown names still go to `DEMO_EMAIL_TO`, and the card says so. "Find a time to
+meet with Maya" (`send_scheduling_link`) drafts an email with `SCHEDULING_LINK`. Real recipients need one Apps Script
+change (an `ALLOWED_TO` allowlist): see `docs/APPS-SCRIPT-UPDATE.md`.
+
 ## Agentic ordering: "hey Scene, place an order at McDonald's"
 
 A real tool-using agent (`agent.py`), not a script. It finds the nearest place (Gemini + Google Maps), reads the

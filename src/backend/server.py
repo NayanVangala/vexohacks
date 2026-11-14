@@ -33,6 +33,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import contacts
 import inbox
 import orders
 import outbox
@@ -340,6 +341,22 @@ async def location(request: Request):
     return {"ok": True}
 
 
+@app.get("/contacts")
+async def contacts_list():
+    return contacts.all()
+
+
+@app.post("/contacts")
+async def contacts_add(request: Request):
+    """Add or update a contact (name, email). JSON or form. Sending to them still needs a tap AND the Apps Script allowlist."""
+    f = await _fields(request)
+    try:
+        contacts.add(f.get("name"), f.get("email"))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"ok": True}
+
+
 @app.get("/agent")
 async def agent_state():
     return memory.agent.state()
@@ -452,7 +469,7 @@ async def log_visitors(request: Request, call_next):
         # The glasses' WebView otherwise keeps an old app.js after an update.
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
     if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log",
-                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/location", "/agent", "/orders", "/order", "/inbox", "/activity", "/session", "/dev")):
+                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/location", "/agent", "/orders", "/order", "/inbox", "/activity", "/session", "/contacts", "/dev")):
         with open(DATA_DIR / "glasses.log", "a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {request.method} {path} -> {response.status_code} "
                     f"ua={request.headers.get('user-agent', '?')[:160]}\n")

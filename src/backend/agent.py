@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import contacts
 import lookup
 import models
 import outbox
@@ -30,7 +31,7 @@ def _system() -> str:
     return f"""You are Scene, a voice assistant on someone's smart glasses. It is {now.strftime('%A %Y-%m-%d %H:%M')} local time.
 You help with errands using tools: ordering food, emailing, the calendar, and searching the web. Rules:
 - Ordering: find_nearby for the restaurant, then ask_user to confirm the nearest place (say its street and distance). If they say no, offer the next one. After they confirm, get_menu, then ask_user what they would like (skip if they already said). Only order items get_menu returned; never invent items or prices. propose_order creates a card they approve; you cannot pay.
-- Email: send_email drafts it; the wearer taps Send. Write the subject and a 2 to 4 sentence body from them to the person. If you do not know what it should say, ask_user first. Never claim an email was sent: you only drafted it.
+- Email and contacts: lookup_contact checks the saved contacts. send_email takes the person's NAME only (never an email address); the app looks up their address. send_scheduling_link emails someone the wearer's scheduling link so they can pick a time ("find a time to meet with Maya"). send_email drafts it; the wearer taps Send. Write the subject and a 2 to 4 sentence body from them to the person. If you do not know what it should say, ask_user first. Never claim an email was sent: you only drafted it.
 - Calendar: add_calendar_event needs a real day and time (start as YYYY-MM-DDTHH:MM local). If the day or time is missing or vague, ask_user first. Resolve "friday" or "tomorrow" from the date above. It makes a card the wearer approves.
 - Search: web_search for facts, products, news. Then answer in one or two spoken sentences; details are already on their screen.
 - "What is high protein" or "healthy options": get_menu then rank_menu, answer in one sentence.
@@ -52,8 +53,13 @@ TOOLS = [
      "parameters": {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
          "name": {"type": "string"}, "qty": {"type": "integer"}}, "required": ["name", "qty"]}}}, "required": ["items"]}},
     {"name": "send_email", "description": "Draft an email for the wearer to approve and send. It does not send by itself.",
-     "parameters": {"type": "object", "properties": {"to": {"type": "string", "description": "Recipient's name"}, "subject": {"type": "string"},
+     "parameters": {"type": "object", "properties": {"to": {"type": "string", "description": "Recipient's NAME, never an email address"}, "subject": {"type": "string"},
                                                      "body": {"type": "string"}}, "required": ["to", "subject", "body"]}},
+    {"name": "lookup_contact", "description": "Check whether a person is in the saved contacts.",
+     "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+    {"name": "send_scheduling_link", "description": "Draft an email to a person with the wearer's scheduling link so they can pick a time to meet. The wearer taps Send.",
+     "parameters": {"type": "object", "properties": {"to": {"type": "string", "description": "Person's name, never an email address"},
+                                                     "note": {"type": "string", "description": "One friendly sentence about what the meeting is for"}}, "required": ["to"]}},
     {"name": "add_calendar_event", "description": "Draft a calendar event for the wearer to approve.",
      "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "start": {"type": "string", "description": "YYYY-MM-DDTHH:MM, local time"},
                                                      "duration_min": {"type": "integer"}}, "required": ["title", "start"]}},
@@ -84,7 +90,7 @@ def _usd(c: int) -> str:
 
 class Agent:
     def __init__(self, step=None, say=None, push=None, where=None, sync=False, find=None, menu=None, propose=None,
-                 draft_email=None, draft_event=None, search=None):
+                 draft_email=None, draft_event=None, search=None, find_contact=None):
         self.step = step or models.agent_step
         self.say = say or (lambda text: None)
         self.push = push or (lambda kind, title, body, ref: None)
@@ -96,6 +102,7 @@ class Agent:
         self.draft_email = draft_email or outbox.draft
         self.draft_event = draft_event or outbox.draft_event
         self.search = search or models.search_web
+        self.find_contact = find_contact or contacts.find
         self._lock = threading.Lock()
         self._reset()
 
@@ -228,15 +235,38 @@ class Agent:
         top = sorted(pool, key=key)[:5]
         return {"items": [{"name": m["name"], "calories": m["calories"], "protein_g": m["protein_g"]} for m in top]}
 
+    def _draft_email(self, name: str, subject: str, body: str) -> dict:
+        """The recipient is resolved here from the contacts book, from a NAME only: the model can never pick an address."""
+        c = self.find_contact(name)
+        shown = c["name"] if c else ("someone" if "@" in name else name)
+        d = self.draft_email(shown, subject, body, self.utterance, to=c["email"] if c else None)
+        title, text = outbox.card_text({**d, "to_name": shown})
+        self.push("email", title, text, d["id"])
+        self.say("Drafted it. Pinch Send on your glasses when you're ready.")
+        self.status = "done"
+        return {"ok": True}
+
     def _t_send_email(self, a: dict) -> dict:
         subject, body = str(a.get("subject") or "").strip(), str(a.get("body") or "").strip()
         if not subject or not body:
             return {"error": "subject and body are required: ask the user what the email should say"}
-        d = self.draft_email(str(a.get("to") or "").strip(), subject, body, self.utterance)
-        self.push("email", f"Email {d['to_name'] or 'them'}?", f"{subject}: {body}", d["id"])
-        self.say("Drafted it. Pinch Send on your glasses when you're ready.")
-        self.status = "done"
-        return {"ok": True}
+        return self._draft_email(str(a.get("to") or "").strip(), subject, body)
+
+    def _t_lookup_contact(self, a: dict) -> dict:
+        c = self.find_contact(str(a.get("name") or ""))
+        return {"found": True, **c} if c else {"error": f"no contact named '{a.get('name')}': offer to send it to the demo inbox or ask them to add the contact"}
+
+    def _t_send_scheduling_link(self, a: dict) -> dict:
+        link = os.environ.get("SCHEDULING_LINK", "").strip()
+        if not link:
+            return {"error": "no scheduling link is set up (SCHEDULING_LINK): tell the user"}
+        name = str(a.get("to") or "").strip()
+        c = self.find_contact(name)
+        first = (c["name"] if c else name).split()[0] if (c or name) and "@" not in (c["name"] if c else name) else "there"
+        note = str(a.get("note") or "").strip() or "I'd like to find a time for us to meet."
+        wearer = os.environ.get("WEARER_NAME", "").split()[:1]
+        body = f"Hi {first},\n\n{note}\n\nYou can pick a time that works for you here: {link}\n\nThanks,\n{wearer[0] if wearer else ''}".rstrip()
+        return self._draft_email(name, "Finding a time to meet", body)
 
     def _t_add_calendar_event(self, a: dict) -> dict:
         title, start = str(a.get("title") or "").strip(), str(a.get("start") or "").strip()

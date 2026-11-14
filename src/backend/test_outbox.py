@@ -99,3 +99,23 @@ def test_event_without_executor_gives_calendar_link(monkeypatch):
     monkeypatch.delenv("EXECUTOR_URL")
     d = outbox.send(make_event()["id"])
     assert d["status"] == "drafted" and d["link"].startswith("https://calendar.google.com/") and "Nothing was" in d["result"]
+
+
+def test_draft_to_a_contact_sends_to_that_address_and_flags_it(monkeypatch):
+    c = FakeClient({"ok": True, "did": "Email sent to maya@example.com", "to": "maya@example.com"})
+    d = outbox.draft("Maya", "Hi", "Body", "q", to="maya@example.com")
+    assert d["to"] == "maya@example.com" and d["to_is_contact"] is True
+    r = outbox.send(d["id"], client=c)
+    assert c.calls[0][1]["to"] == "maya@example.com" and r["status"] == "sent" and r["result"] == "Email sent to maya@example.com"
+
+
+def test_draft_without_a_contact_goes_to_the_demo_address():
+    d = outbox.draft("Priya", "Hi", "Body", "q")
+    assert d["to"] == "ultra@example.com" and d["to_is_contact"] is False
+
+
+def test_send_is_honest_when_the_executor_used_a_different_recipient():
+    c = FakeClient({"ok": True, "did": "Email sent to ultra@example.com", "to": "ultra@example.com"})
+    d = outbox.draft("Maya", "Hi", "Body", "q", to="maya@example.com")
+    r = outbox.send(d["id"], client=c)
+    assert r["status"] == "sent" and "ultra@example.com" in r["result"] and "not maya@example.com" in r["result"]

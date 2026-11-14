@@ -2,8 +2,9 @@
  * Follow-Through executor. A Google Apps Script web app that really creates calendar events and sends email.
  * It runs as the Google account that deploys it, so deploy it from srijansaha.work@gmail.com.
  *
- * Two locks: a shared secret (TOKEN) and a fixed email recipient (DEMO_TO). Whatever the request says,
- * mail only goes to DEMO_TO. Set both under Project Settings > Script properties.
+ * Two locks: a shared secret (TOKEN) and the recipient. Mail goes to DEMO_TO unless the request names an address that
+ * is on ALLOWED_TO (comma-separated, Script properties), so a typo or a hallucinated address can never be emailed.
+ * Set TOKEN, DEMO_TO and ALLOWED_TO under Project Settings > Script properties. The reply says who it really sent to.
  */
 
 function doPost(e) {
@@ -14,10 +15,14 @@ function doPost(e) {
       return out({ ok: false, error: 'bad token' });
     }
     if (req.action === 'email') {
-      var to = props.getProperty('DEMO_TO');
-      if (!to) return out({ ok: false, error: 'DEMO_TO is not set' });
+      var demo = props.getProperty('DEMO_TO');
+      if (!demo) return out({ ok: false, error: 'DEMO_TO is not set' });
+      var allowed = (props.getProperty('ALLOWED_TO') || '').toLowerCase().split(',')
+        .map(function (a) { return a.trim(); }).filter(String);
+      var want = String(req.to || '').trim().toLowerCase();
+      var to = want && allowed.indexOf(want) !== -1 ? want : demo;
       GmailApp.sendEmail(to, req.subject || req.title, req.body || '');
-      return out({ ok: true, did: 'Email sent to ' + to });
+      return out({ ok: true, did: 'Email sent to ' + to, to: to });
     }
     if (req.action === 'calendar') {
       var start = new Date(req.start), end = new Date(req.end);

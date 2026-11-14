@@ -44,8 +44,9 @@ def pending() -> list[dict]:
     return [d for d in sorted(_drafts.values(), key=lambda d: -d["id"]) if d["status"] == "proposed"]
 
 
-def draft(to_name: str, subject: str, body: str, quote: str) -> dict:
-    d = {"id": next(_ids), "kind": "email", "to_name": to_name, "to": os.environ.get("DEMO_EMAIL_TO", ""), "subject": subject,
+def draft(to_name: str, subject: str, body: str, quote: str, to: str | None = None) -> dict:
+    """`to` is a saved contact's address; without one the email goes to DEMO_EMAIL_TO."""
+    d = {"id": next(_ids), "kind": "email", "to_name": to_name, "to": to or os.environ.get("DEMO_EMAIL_TO", ""), "to_is_contact": bool(to), "subject": subject,
          "body": body, "quote": quote, "status": "proposed", "result": "", "link": "", "ts": time.time()}
     _drafts[d["id"]] = d
     _save()
@@ -69,6 +70,18 @@ def draft_event(title: str, start_local: str, duration_min: int, quote: str) -> 
 def _times(d: dict) -> tuple[datetime, datetime]:
     start = datetime.strptime(d["start"], TIME_FORMAT).replace(tzinfo=ZoneInfo(os.environ.get("TIMEZONE", "America/Los_Angeles")))
     return start, start + timedelta(minutes=d["duration_min"])
+
+
+def card_text(d: dict) -> tuple[str, str]:
+    """Title and body for an email draft's card: who it really goes to, so the tap is informed."""
+    title = f"Email {d['to_name'] or 'them'}?"
+    if d.get("to_is_contact"):
+        who = f"To: {d['to']} · "
+    elif d["to_name"]:
+        who = f"No contact saved for {d['to_name']}: goes to your demo inbox · "
+    else:
+        who = ""
+    return title, f"{who}{d['subject']}: {d['body']}"
 
 
 def get(draft_id: int) -> dict:
@@ -118,7 +131,10 @@ def send(draft_id: int, client: httpx.Client | None = None) -> dict:
         data = client.post(url, content=json.dumps(payload),
                            headers={"Content-Type": "text/plain;charset=utf-8"}).json()
         if data.get("ok"):
-            d.update(status="sent", result=data.get("did", "Sent"))
+            result = data.get("did", "Sent")
+            if d["kind"] == "email" and data.get("to") and data["to"].lower() != d["to"].lower():
+                result += f" (not {d['to']}: not on the allowlist)"   # the Apps Script fell back to the demo address
+            d.update(status="sent", result=result)
         else:
             d.update(status="failed", result=data.get("error", "executor said no"))
     except Exception as e:  # network down, bad JSON, ...

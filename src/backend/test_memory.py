@@ -85,6 +85,8 @@ def test_frame_and_transcript_become_memories(monkeypatch):
 def test_wake_word_answers_aloud(monkeypatch):
     spoken = []
     monkeypatch.setattr(voice, "speak", spoken.append)
+    chimes = []
+    monkeypatch.setattr(voice, "chime", lambda: chimes.append(1))
     monkeypatch.setattr(voice, "_cooldown_until", 0.0)
     monkeypatch.setattr(memory, "ask", lambda q: {"question": q, "answer": "On the kitchen counter.",
                                                   "memory_id": 1, "frame": "123.jpg"})
@@ -99,6 +101,7 @@ def test_wake_word_answers_aloud(monkeypatch):
         memory.process_audio(wav)
 
     assert spoken == ["On the kitchen counter."]
+    assert chimes == [1]          # pinged once, when "Hey Scene" was heard
     [card] = memory.cards_after(last_card)
     assert (card["kind"], card["title"]) == ("answer", "where did I leave my keys?")
     assert len(memory._transcript) == before  # question and Whisper's "Thank you." kept out of tasks
@@ -161,3 +164,18 @@ def test_followthrough_call_and_response(monkeypatch):
 
     memory._ft_enqueue([{"id": "a1", "status": "pending", "title": "Send Nayan the deck"}])   # asked once only
     assert len([s for s in spoken if s.startswith("Want me")]) == 1
+
+
+def test_whisper_room_noise_is_dropped():
+    for junk in ["Thank you very much.", "Thank you. Bye. Bye.", "😋", "谢谢观看 欢迎订阅我的频道", "시청 해주셔서 감사합니다.", "Thanks."]:
+        assert voice.is_noise(junk), junk
+    for real in ["Hey scene, where did I leave my headphones?", "Where are my headphones?", "Yep, send it by four."]:
+        assert not voice.is_noise(real), real
+
+
+def test_question_to_scene_without_wake_word():
+    q = memory._QUESTION_TO_SCENE
+    for s in ["Where are my headphones?", "where did I leave my keys?", "What did Sam ask me to do?", "Did I pay the venue?"]:
+        assert q.search(s), s
+    for s in ["Can you send me the deck by four?", "Where are we going for lunch?", "I left my keys there."]:
+        assert not q.search(s), s

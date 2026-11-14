@@ -34,6 +34,8 @@ final class BridgeController {
 
     /// Feed, tasks, things, payments. Drives the phone screens AND the glasses.
     let memory: MemoryStore
+    /// Phone GPS -> /location, for the ordering agent's "nearest" place.
+    private(set) lazy var location = LocationReporter(backend: backend)
     private let player = AudioPlayer()
 
     #if DEBUG
@@ -163,6 +165,9 @@ final class BridgeController {
         memory.onSpeech = { [weak self] audio in
             self?.player.speak(audio)
         }
+        memory.onChime = { [weak self] in
+            self?.player.chime()
+        }
 
         // NOTHING in this initializer may touch the MWDAT SDK. SwiftUI evaluates
         // an App's stored properties before its init() body, so this runs before
@@ -182,6 +187,7 @@ final class BridgeController {
         BridgeState.log("microphone permission: \(granted ? "granted" : "DENIED")")
         await pingBackend()
         memory.startPolling()
+        location.start()
 
         #if DEBUG
         // Unattended MockDeviceKit runs (docs/VERIFICATION.md):

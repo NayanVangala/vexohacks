@@ -140,9 +140,12 @@ def transcribe(wav: bytes) -> str:
             {"text": 'Transcribe the speech verbatim. Return JSON {"text": str}; "" if there is no speech.'},
         ])
         return (out.get("text") or "").strip()
+    # English only (it heard "hey scene" as Swedish "Hejsan" and filled silence with Korean/Chinese
+    # subtitle phrases), temperature 0, and a prompt so it spells the wake word the way we match it.
     out = _openai("/audio/transcriptions",
                   files={"file": ("chunk.wav", wav, "audio/wav")},
-                  data={"model": OPENAI_STT_MODEL})
+                  data={"model": OPENAI_STT_MODEL, "language": os.environ.get("SCENE_LANGUAGE", "en"),
+                        "temperature": "0", "prompt": "Hey Scene, where are my keys?"})
     return out.get("text", "").strip()
 
 

@@ -37,7 +37,6 @@ struct GlassesView: View {
                     StackCard(color: Theme.sky, index: 2) { laptop }.scrollDepth()
                     startButton.rise(3)
                 }
-                .padding(.horizontal, -16)
 
                 diagnostics
             }
@@ -286,7 +285,6 @@ struct GlassesView: View {
             }
         }
         .fixedSize(horizontal: false, vertical: true)
-        .padding(.horizontal, 8)
         .animation(.spring(response: 0.45, dampingFraction: 0.8), value: state.isRunning)
     }
 

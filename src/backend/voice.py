@@ -19,9 +19,13 @@ WAKE = re.compile(os.environ.get(
     "SCENE_WAKE_REGEX", r"\b(?:hey|hi|ok|okay)[\s,.!]+(?:scene|scenes|seen|sean|shean|sene|scen)\b"), re.I)
 WINDOW_S = float(os.environ.get("SCENE_WAKE_WINDOW_S", "6"))      # keep listening this long for the question
 MIN_QUESTION_CHARS = int(os.environ.get("SCENE_WAKE_MIN_CHARS", "12"))
-COOLDOWN_S = float(os.environ.get("SCENE_WAKE_COOLDOWN_S", "12"))  # glasses mic hears the laptop answer
-ELEVEN_VOICE = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
-ELEVEN_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
+COOLDOWN_S = float(os.environ.get("SCENE_WAKE_COOLDOWN_S", "4"))   # answers play in the glasses now, the mic barely hears them  # glasses mic hears the laptop answer
+# Alternatives on the account: Sarah (EXAVITQu4vr4xnSDxMaL, reassuring), River (SAz9YHcvj6GT2YYXdXww, relaxed,
+# neutral), Eric (cjVigY5qzO86Huf0OWal, smooth).
+ELEVEN_VOICE = os.environ.get("ELEVENLABS_VOICE_ID", "cgSgspJ2msm6clMCkdW9")   # Jessica: bright, warm
+ELEVEN_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")    # most natural; ~0.6 s, made ahead of time
+# Conversational delivery: lower stability = less monotone, some style = expression. Not a copy of any product's voice.
+ELEVEN_SETTINGS = {"stability": 0.4, "similarity_boost": 0.8, "style": 0.3, "use_speaker_boost": True}
 
 # Whisper invents these on silence. ponytail: fixed list; widen it from real logs if more show up.
 HALLUCINATIONS = {"thank you", "thanks for watching", "you", "bye", "thank you for watching", "okay"}
@@ -42,7 +46,13 @@ _cooldown_until = 0.0
 
 def is_noise(text: str) -> bool:
     t = re.sub(r"[^a-z' ]", "", text.lower()).strip()
-    return t.replace("'", "") in HALLUCINATIONS or any(p in t for p in PHANTOM_PHRASES)
+    if not re.search(r"[a-z]{2}", t):          # emoji, CJK subtitles, punctuation: not English speech
+        return True
+    words = t.replace("'", "")
+    # Whisper's favourite inventions on room noise: any mix of thanks/bye/you and nothing else.
+    if set(words.split()) <= {"thank", "thanks", "you", "very", "much", "so", "bye", "okay", "ok"}:
+        return True
+    return words in HALLUCINATIONS or any(p in t for p in PHANTOM_PHRASES)
 
 
 def is_silent(wav: bytes) -> bool:
@@ -153,8 +163,21 @@ from collections import deque as _deque  # noqa: E402
 import itertools as _itertools           # noqa: E402
 
 _utterances: _deque = _deque(maxlen=30)
-_utterance_ids = _itertools.count(1)
+# Ids start from the clock, so a server restart never reuses an id the phone already played.
+_utterance_ids = _itertools.count(int(time.time() * 1000))
 _audio_cache: dict[int, tuple[bytes, str]] = {}
+
+
+def chime() -> None:
+    """The 'I heard you' ping, played the moment the wake word is recognized (like Meta AI's).
+    The phone plays its own chime for a {kind: chime} line (nothing to download); the laptop plays Tink."""
+    if not speaks():
+        return
+    target = speak_on()
+    if target in ("glasses", "both"):
+        _utterances.append({"id": next(_utterance_ids), "text": "", "kind": "chime", "ts": time.time()})
+    if target in ("laptop", "both"):
+        subprocess.Popen(["afplay", "/System/Library/Sounds/Tink.aiff"])
 
 
 def speak(text: str) -> None:
@@ -163,7 +186,11 @@ def speak(text: str) -> None:
         return
     target = speak_on()
     if target in ("glasses", "both"):
-        _utterances.append({"id": next(_utterance_ids), "text": text, "ts": time.time()})
+        u = {"id": next(_utterance_ids), "text": text, "ts": time.time()}
+        _utterances.append(u)
+        # Make the audio now, so it's ready the moment the phone asks (~1.5 s saved).
+        import threading
+        threading.Thread(target=audio_for, args=(u["id"],), daemon=True).start()
     if target in ("laptop", "both"):
         _play_on_laptop(text)
 
@@ -173,8 +200,19 @@ def utterances_after(n: int) -> list[dict]:
     return [u for u in list(_utterances) if u["id"] > n]
 
 
+_synth_locks: dict[int, "object"] = {}
+
+
 def audio_for(utterance_id: int) -> tuple[bytes, str] | None:
-    """ElevenLabs MP3 for one queued line (macOS `say` AIFF without a key). Cached: the phone may retry."""
+    """ElevenLabs MP3 for one queued line (macOS `say` AIFF without a key). Made once: the background
+    pre-synthesis and the phone's request share one lock per line, so it's never generated twice."""
+    import threading
+    lock = _synth_locks.setdefault(utterance_id, threading.Lock())
+    with lock:
+        return _audio_for_locked(utterance_id)
+
+
+def _audio_for_locked(utterance_id: int) -> tuple[bytes, str] | None:
     if utterance_id in _audio_cache:
         return _audio_cache[utterance_id]
     u = next((u for u in list(_utterances) if u["id"] == utterance_id), None)
@@ -182,6 +220,8 @@ def audio_for(utterance_id: int) -> tuple[bytes, str] | None:
         return None
     out = synthesize(u["text"])
     _audio_cache[utterance_id] = out
+    for old in [k for k in list(_synth_locks) if k < utterance_id - 30]:
+        _synth_locks.pop(old, None)
     for old in [k for k in _audio_cache if k < utterance_id - 30]:
         _audio_cache.pop(old, None)
     return out
@@ -193,7 +233,7 @@ def synthesize(text: str) -> tuple[bytes, str]:
         try:
             r = httpx.post(f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE}",
                            headers={"xi-api-key": key}, timeout=15,
-                           json={"text": text, "model_id": ELEVEN_MODEL})
+                           json={"text": text, "model_id": ELEVEN_MODEL, "voice_settings": ELEVEN_SETTINGS})
             r.raise_for_status()
             return r.content, "audio/mpeg"
         except Exception as e:
@@ -213,7 +253,7 @@ def _play_on_laptop(text: str) -> None:
         try:
             r = httpx.post(f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE}",
                            headers={"xi-api-key": key}, timeout=15,
-                           json={"text": text, "model_id": ELEVEN_MODEL})
+                           json={"text": text, "model_id": ELEVEN_MODEL, "voice_settings": ELEVEN_SETTINGS})
             r.raise_for_status()
             f = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
             f.write(r.content)

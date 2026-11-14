@@ -54,8 +54,8 @@ struct Eyebrow: View {
     }
 }
 
-/// A card in the stack: rounded top only, padded at the bottom so the next card
-/// can tuck over it. Put several in `VStack(spacing: -Theme.overlap)`.
+/// A card in the stack: inset from the screen edges and rounded on every corner, padded at the
+/// bottom so the next card can tuck over it. Put several in `VStack(spacing: -Theme.overlap)`.
 struct StackCard<Content: View>: View {
     let color: Color
     var index = 0
@@ -68,8 +68,7 @@ struct StackCard<Content: View>: View {
             .padding(.bottom, 26 + Theme.overlap)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                UnevenRoundedRectangle(topLeadingRadius: Theme.cardRadius, topTrailingRadius: Theme.cardRadius,
-                                       style: .continuous)
+                RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
                     .fill(color)
                     .shadow(color: .black.opacity(0.06), radius: 12, y: -4)
             )

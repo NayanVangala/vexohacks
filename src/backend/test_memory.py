@@ -107,3 +107,16 @@ def test_wake_regex_variants():
     for s in ["hey scene what's on my list", "Hey, Seen. what did Sam ask", "ok sean where's my wallet"]:
         assert voice.WAKE.search(s), s
     assert not voice.WAKE.search("I have seen hey there")
+
+
+def test_provider_switch_reembeds_old_rows(monkeypatch):
+    # A row embedded with a 3-dim model, searched with a 256-dim one: it must be re-embedded, not skipped.
+    monkeypatch.setattr(models, "embed", fake_embed)
+    with memory._db_lock:
+        rid = memory.db().execute(
+            "INSERT INTO memories (kind, text, place, ts, embedding) VALUES ('object','umbrella','by the door',?,?)",
+            (memory.time.time(), "[1, 2, 3]")).lastrowid
+        memory.db().commit()
+    hits = memory.search(fake_embed("umbrella by the door"), 50)
+    assert any(r["id"] == rid for _, r in hits)
+    assert len(memory.json.loads(memory.rows("SELECT embedding FROM memories WHERE id=?", rid)[0]["embedding"])) == DIM

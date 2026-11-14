@@ -92,10 +92,21 @@ def _cos(a: list[float], b: list[float]) -> float:
 
 def search(vec: list[float], k: int = 5, where: str = "1=1", *args) -> list[tuple[float, dict]]:
     # ponytail: brute-force cosine over every row in Python, fine to ~10k rows; sqlite-vec if it grows.
-    # Rows embedded by the other provider have a different length: skip them, never compare across spaces.
-    scored = [(_cos(vec, e), r) for r in rows(f"SELECT * FROM memories WHERE embedding IS NOT NULL AND {where}", *args)
-              if len(e := json.loads(r["embedding"])) == len(vec)]
+    scored = []
+    for r in rows(f"SELECT * FROM memories WHERE embedding IS NOT NULL AND {where}", *args):
+        e = json.loads(r["embedding"])
+        if len(e) != len(vec):  # embedded by the other provider (key added/removed): re-embed once, in place
+            e = _reembed(r)
+        scored.append((_cos(vec, e), r))
     return sorted(scored, key=lambda s: s[0], reverse=True)[:k]
+
+
+def _reembed(r: dict) -> list[float]:
+    vec = models.embed(f"{r['text']}: {r['place']}" if r["place"] else r["text"])
+    with _db_lock:
+        db().execute("UPDATE memories SET embedding=? WHERE id=?", (json.dumps(vec), r["id"]))
+        db().commit()
+    return vec
 
 
 # ---------- ingest (called from server, cheap) ----------
@@ -260,6 +271,11 @@ def set_done(task_id: int) -> bool:
 def ask(question: str) -> dict:
     now = time.time()
     hits = [(s, r) for s, r in search(models.embed(question), 8) if s >= MIN_SIM]
+    # Open tasks are always relevant to "what do I need to do?"-style questions and there are few
+    # of them: include them even when the wording doesn't match closely.
+    seen = {r["id"] for _, r in hits}
+    hits += [(0.0, r) for r in rows("SELECT * FROM memories WHERE kind='task' AND status='open' ORDER BY ts DESC LIMIT 5")
+             if r["id"] not in seen]
     if not hits:  # no model call: nothing relevant is better than a confident wrong answer
         return {"question": question, "answer": "I don't have a memory of that.", "memory_id": None, "frame": None}
     mems = [{"id": r["id"], "kind": r["kind"], "text": r["text"], "place": r["place"],

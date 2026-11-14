@@ -45,6 +45,12 @@ D-pad focus + pinch to act, about 10 KB, no dependencies). The backend serves it
 it shares an origin with the API. It shows what needs you (a payment to approve, a new task, the
 latest answer) and your Tasks and Things.
 
+**Works with the Meta Neural Band alone.** The band's D-pad gestures move focus and its pinch
+selects, so every action works without voice: approve or dismiss a payment, mark a task done,
+browse Recent, and **ask questions with a pinch** (preset questions built from what Scene has seen,
+like "Where did I leave my wallet?" or "Does anyone owe me money?"). If the mic fails or the room
+is loud, Scene still works.
+
 Add it once on the phone: Meta AI → Devices → Display Glasses settings → App connections →
 Web apps → Add a web app → `https://<your tunnel>/glasses/` (any public HTTPS URL to the backend).
 The phone bridge then only streams camera and mic, and the glasses app draws the cards.
@@ -52,7 +58,9 @@ The phone bridge then only streams camera and mic, and the glasses app draws the
 ## Built to be accessible
 
 - **Hands-free by default.** Ask out loud ("hey scene"), hear the answer spoken back, approve with
-  a pinch. No screen needed for the everyday loop.
+  a pinch. No phone screen needed for the everyday loop.
+- **Voice is optional.** Everything, including asking questions, also works with the Neural Band
+  alone, for loud rooms, a failed mic, or people who can't or don't want to speak.
 - **For people who forget.** Where things are, what was promised, and what's owed, kept for you and
   searchable by meaning, not exact words.
 - **Calm interface.** Large type, high-contrast numbers, one primary action per screen. All motion

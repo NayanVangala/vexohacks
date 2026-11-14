@@ -381,11 +381,26 @@ final class WearablesManager {
         frameSizeWatch.reset()
         BridgeState.setConnection(.connecting)
 
-        if await buildSessionAndStream() { return }
+        // Ray-Ban Display often refuses the first session ("Device unavailable") right after
+        // waking or charging, then accepts a later one. Retry the first start with the same
+        // backoff as recovery instead of giving up until someone taps Start again.
+        for attempt in 1...Self.startAttempts {
+            if await buildSessionAndStream() { return }
+            if isTearingDown { break }
+            await teardownSessionArtifacts()
+            guard attempt < Self.startAttempts else { break }
+            let wait = Self.recoveryDelay(forAttempt: attempt)
+            BridgeState.log("glasses refused the session — retry \(attempt + 1)/\(Self.startAttempts) in \(wait)")
+            try? await Task.sleep(for: wait)
+            if isTearingDown { break }
+        }
 
         BridgeState.setConnection(.disconnected)
         isStarted = false
     }
+
+    /// 2 + 5 + 10 + 20 + 30 s of waiting: about a minute and a half before giving up.
+    static let startAttempts = 6
 
     /// Steps 2-8: selector, eligibility wait, session, listeners, stream.
     ///

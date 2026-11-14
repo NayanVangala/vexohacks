@@ -21,13 +21,16 @@ import re
 import threading
 import time
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 
 import httpx
-
+import outbox
 import models
+import notes
 import payments
 import voice
+from awareness import Awareness, parse_yes_no
 
 DATA_DIR = Path(os.environ.get("SCENE_DATA_DIR", Path(__file__).parent / "data"))
 ENABLED = bool(os.environ.get("GEMINI_API_KEY"))  # OpenAI optional: models.py falls back to Gemini
@@ -51,6 +54,9 @@ _card_ids = itertools.count(1)
 _last_frame = 0.0
 _last_extract = time.time()
 _transcript: list[str] = []
+awareness = Awareness()
+STOP_NOTES = re.compile(r"\b(stop|end|finish)\s+(the\s+)?notes\b", re.I)
+MAX_ANSWER_WORDS = 6   # a spoken yes/no to an offer is short; a long sentence in a meeting is not an answer
 
 
 # ---------- storage ----------
@@ -181,6 +187,7 @@ def quoted(item: dict, transcript: str) -> bool:
 
 def process_frame(path: Path) -> None:
     seen = models.see(path.read_bytes())
+    handle_scene(seen.get("scene"), path.name)
     for o in seen.get("objects", []):
         name, place = o.get("name", "").strip().lower(), o.get("place", "").strip()
         if not name:
@@ -212,6 +219,13 @@ def process_audio(path: Path) -> None:
     text = models.transcribe(path.read_bytes())
     if not text or voice.is_noise(text):
         return
+    pending = awareness.pending(time.time())
+    if pending and len(text.split()) <= MAX_ANSWER_WORDS and parse_yes_no(text) != "unclear":
+        answer_offer(pending.id, parse_yes_no(text) == "yes")
+        return
+    if notes.active() and STOP_NOTES.search(text):
+        finish_notes()
+        return
     question = voice.heard(text)
     if question:  # a question to Scene is not a task someone gave you: keep it out of the transcript
         out = ask(question)
@@ -221,9 +235,76 @@ def process_audio(path: Path) -> None:
         return
     if voice.listening():  # "hey scene" heard, question still coming: not part of any conversation
         return
+    notes.add_line(text)
     _transcript.append(text)
     if time.time() - _last_extract >= EXTRACT_EVERY_S and _transcript:
         flush_transcript()
+
+
+# ---------- scene awareness: offers and notes (see docs/superpowers/specs/2026-11-14-scene-awareness-design.md) ----------
+
+def handle_scene(scene: dict | None, frame: str | None) -> None:
+    """One analyzed frame's scene: feed the note session, remember menus and the like, maybe offer notes."""
+    now = time.time()
+    if notes.active() and notes.on_scene(scene, frame, now):
+        finish_notes()
+    awareness.set_busy(notes.active())
+    text = awareness.loggable(scene, now)
+    if text:
+        add("event", text, frame=frame)
+    offer = awareness.feed(scene, now)
+    if offer:
+        push_card("offer", "Take notes?", offer.text, ref=offer.id, frame=frame)
+        voice.speak(offer.text)
+        print(f"memory: OFFER {offer.text!r}", flush=True)
+
+
+def answer_offer(offer_id: int, accept: bool) -> dict:
+    """KeyError when that offer is not the one waiting (unknown, expired, or already answered)."""
+    now = time.time()
+    if accept:
+        awareness.accept(offer_id, now)
+        notes.start(now)
+        awareness.set_busy(True)
+    else:
+        awareness.decline(offer_id, now)
+    return {"offer": offer_id, "accepted": accept}
+
+
+def finish_notes() -> int | None:
+    """End the session and build the notes. Returns the notes memory id, or None when none was running."""
+    session = notes.stop()
+    awareness.set_busy(False)
+    if session is None:
+        return None
+    try:
+        out = notes.build(session, make=models.make_notes)
+    except Exception as e:  # the model failed: keep the slides rather than lose the meeting
+        print(f"memory: notes build failed: {e!r}", flush=True)
+        out = notes.build(session, make=lambda transcript, slides: {})
+    for a in out["action_items"]:
+        tid = add("task", a["text"], status="open")
+        if a.get("action") == "email":  # still a task, but the lens offers to send the email
+            d = outbox.draft(a.get("to", ""), a["subject"], a["body"], a["quote"])
+            push_card("email", f"Email {d['to_name'] or 'them'}?", f"{d['subject']}: {d['body']}", ref=d["id"])
+        elif a.get("action") == "calendar":
+            d = outbox.draft_event(a["text"], a["start"], a["duration_min"], a["quote"])
+            when = datetime.strptime(a["start"], "%Y-%m-%dT%H:%M").strftime("%a %b %-d, %-I:%M %p")
+            push_card("calendar", "Add to calendar?", f"{a['text']} · {when}", ref=d["id"])
+        else:
+            push_card("task", "New task", a["text"], ref=tid)
+    summary = out["summary"] or "Meeting notes"
+    nid = add("notes", summary)
+    (DATA_DIR / "notes").mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "notes" / f"{nid}.json").write_text(json.dumps(out))
+    push_card("notes", "Meeting notes", out["summary"] or "No summary.", ref=nid)
+    print(f"memory: NOTES #{nid} ({len(out['action_items'])} tasks, {len(out['slides'])} slides)", flush=True)
+    return nid
+
+
+def get_notes(note_id: int) -> dict | None:
+    p = DATA_DIR / "notes" / f"{note_id}.json"
+    return json.loads(p.read_text()) if p.is_file() else None
 
 
 def flush_transcript() -> None:

@@ -50,7 +50,10 @@ async function poll() {
 function spotlight() {
   const pay = state.payments.find(p => p.status === 'proposed');
   if (pay) return { kind: 'payment', pay };
-  const card = state.cards.find(c => !state.dismissed.has(c.id) && c.kind !== 'payment');
+  // An offer only matters while it is fresh (the server expires it after 60 s).
+  const offer = state.cards.find(c => c.kind === 'offer' && !state.dismissed.has(c.id) && Date.now() / 1000 - c.ts < 60);
+  if (offer) return { kind: 'offer', card: offer };
+  const card = state.cards.find(c => !state.dismissed.has(c.id) && c.kind !== 'payment' && c.kind !== 'offer');
   return card ? { kind: card.kind, card } : null;
 }
 
@@ -68,6 +71,21 @@ function home() {
       <div class="body">from ${esc(s.pay.counterparty || 'someone')} · ${esc(s.pay.memo)}</div>
       <div class="row"><button class="primary" data-act="approve" data-id="${s.pay.id}">Approve</button>
       <button data-act="reject" data-id="${s.pay.id}">Not now</button></div></div>`;
+  } else if (s?.kind === 'offer') {
+    hero = `<div class="card task"><div class="eyebrow">Scene noticed</div>
+      <div class="title">${esc(s.card.body)}</div>
+      <div class="row"><button class="primary" data-act="offer-yes" data-id="${s.card.ref}" data-card="${s.card.id}">Yes, take notes</button>
+      <button data-act="offer-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
+  } else if (s?.kind === 'email') {
+    hero = `<div class="card payment"><div class="eyebrow">${esc(s.card.title)}</div>
+      <div class="title">${esc(s.card.body)}</div>
+      <div class="row"><button class="primary" data-act="email-send" data-id="${s.card.ref}" data-card="${s.card.id}">Send</button>
+      <button data-act="email-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
+  } else if (s?.kind === 'calendar') {
+    hero = `<div class="card payment"><div class="eyebrow">${esc(s.card.title)}</div>
+      <div class="title">${esc(s.card.body)}</div>
+      <div class="row"><button class="primary" data-act="event-add" data-id="${s.card.ref}" data-card="${s.card.id}">Add it</button>
+      <button data-act="event-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
   } else if (ext) {
     hero = ext;
   } else if (!s) {
@@ -152,6 +170,18 @@ $app.addEventListener('click', async e => {
     if (act === 'approve') { await api(`/payments/${id}/approve`, 'POST'); state.note = 'Requested. Show the QR on your phone.'; }
     if (act === 'reject') await api(`/payments/${id}/reject`, 'POST');
     if (act === 'done' && id) await api(`/tasks/${id}/done`, 'POST');
+    if (act === 'offer-yes') { await api(`/offers/${id}/accept`, 'POST').catch(() => {}); state.note = 'Taking notes.'; }
+    if (act === 'offer-no') await api(`/offers/${id}/decline`, 'POST').catch(() => {});
+    if (act === 'email-send') {
+      const d = await api(`/emails/${id}/send`, 'POST');
+      state.note = d.status === 'sent' ? 'Sent. ' + d.result : d.status === 'drafted' ? d.result : 'Not sent: ' + d.result;
+    }
+    if (act === 'event-add') {
+      const d = await api(`/events/${id}/add`, 'POST');
+      state.note = d.status === 'sent' ? d.result : d.status === 'drafted' ? d.result : 'Not added: ' + d.result;
+    }
+    if (act === 'event-no') await api(`/events/${id}/dismiss`, 'POST').catch(() => {});
+    if (act === 'email-no') await api(`/emails/${id}/dismiss`, 'POST').catch(() => {});
     if (act === 'clear-answer') { state.answer = null; }
     if (act === 'ask') {
       state.asking = q; render();

@@ -62,6 +62,38 @@ Add it once on the phone: Meta AI → Devices → Display Glasses settings → A
 Web apps → Add a web app → `https://<your tunnel>/glasses/` (any public HTTPS URL to the backend).
 The phone bridge then only streams camera and mic, and the glasses app draws the cards.
 
+## Scene awareness: it notices the situation
+
+Every frame Gemini also reports a scene (`meeting`, `slides`, `whiteboard`, `card`, `menu`, `none`).
+When the same meeting or slides scene holds for 3 frames in a row, Scene asks, out loud and on the lens:
+"Hey Srijan, looks like you're sitting in on a meeting. Want me to take notes?" Yes (button, pinch, or
+a short spoken "yeah") starts a note session: the transcript plus one frame per slide change. "Stop
+notes" (or `POST /notes/stop`, or 10 minutes with no meeting on screen) builds a summary, decisions,
+the slides, and action items. An action item is kept only if its quote is really in the transcript or on
+a saved slide. Whiteboards, cards and menus are only remembered. It asks once, then stays quiet for 10
+minutes (30 if you said no).
+
+Try it without glasses (`SCENE_DEV=1` turns on the dev routes):
+
+```bash
+for i in 1 2 3; do curl -s -X POST :8001/dev/scene -H 'content-type: application/json' \
+  -d '{"type":"meeting","confidence":0.9}'; done        # the offer is spoken and shows on /feed
+curl -s -X POST :8001/offers/1/accept                     # start taking notes
+curl -s -X POST :8001/dev/line -H 'content-type: application/json' -d '{"text":"I will send the budget to Priya by Friday"}'
+curl -s -X POST :8001/notes/stop                          # {"notes": <id>}, then GET /notes/<id>
+```
+
+**Emailing.** When an action item means "send X to someone", notes turn it into an email draft card
+(Send / Not now). Send goes through the Follow-Through executor (`EXECUTOR_URL`, `EXECUTOR_TOKEN`) and the
+recipient is always `DEMO_EMAIL_TO`, never the person named. "Sent" shows only when the executor
+confirms; with no executor you get a Gmail draft link and "Nothing was sent". Set those three env vars
+in `src/backend/.env`. A meeting agreed with a real day and time becomes an "Add to calendar?" card the
+same way (`/events/<id>/add`); a vague time ("sometime") stays a plain task.
+
+Tuning (env): `SCENE_NEED_FRAMES` (3), `SCENE_MIN_CONF` (0.6), `SCENE_SHOWN_COOLDOWN_S` (600),
+`SCENE_DECLINED_COOLDOWN_S` (1800), `SCENE_OFFER_EXPIRE_S` (60). Design:
+`docs/superpowers/specs/2026-11-14-scene-awareness-design.md`.
+
 ## Built to be accessible
 
 - **Hands-free by default.** Ask out loud ("hey scene"), hear the answer spoken back, approve with

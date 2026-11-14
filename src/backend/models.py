@@ -25,12 +25,18 @@ _http = httpx.Client(timeout=30)
 
 VISION_PROMPT = """You are the memory of someone wearing smart glasses. This is what they see.
 Return JSON: {"objects": [{"name": str, "place": str}], "activity": str,
-              "receipt": {"merchant": str, "total": number} or null}
+              "receipt": {"merchant": str, "total": number} or null,
+              "scene": {"type": str, "confidence": number, "text": str}}
 - objects: personal belongings worth remembering the location of (keys, wallet, phone, laptop,
   bag, glasses, mug, notebook...). Skip furniture and fixed things. place = short, concrete
   ("on the kitchen counter next to the sink"). Empty list if none.
 - activity: one short sentence of what the wearer is doing, or "" if nothing notable.
-- receipt: only if a receipt, bill, or check is clearly readable: merchant name and final total. Else null."""
+- receipt: only if a receipt, bill, or check is clearly readable: merchant name and final total. Else null.
+- scene: the situation the wearer is in. type is one of "meeting" (people gathered at a table or in a
+  conference room), "slides" (a screen or projector showing presentation slides), "whiteboard",
+  "card" (a business card), "menu" (a restaurant menu), or "none". confidence is 0 to 1.
+  text is the headline or main text of the slide, whiteboard, card or menu exactly as readable, else "".
+  When unsure, answer "none" with low confidence."""
 
 EXTRACT_PROMPT = """You read a transcript heard by someone's smart glasses.
 Return JSON: {"tasks": [{"text": str, "from_whom": str, "due": str, "quote": str}],
@@ -43,6 +49,23 @@ Items whose quote is not in the transcript are thrown away, so never paraphrase 
 - done: things the wearer says they finished ("I sent the deck"); text phrased as the task.
 - owed_to_me: someone clearly says they owe the wearer money or will pay them back. amount in dollars;
   use the recent receipts given as context to resolve "half" or "my share". Skip if the amount is unclear.
+Empty lists if nothing. Ignore small talk."""
+
+NOTES_PROMPT = """You turn a meeting transcript (heard by smart glasses) and the text of slides shown into notes.
+Return JSON: {"summary": str, "decisions": [str],
+              "action_items": [{"text": str, "quote": str, "action": str, "to": str, "subject": str, "body": str,
+                                "start": str, "duration_min": number}]}
+- summary: at most 3 plain sentences.
+- decisions: things that were decided, each one short.
+- action_items: things someone committed to do. text = imperative, self-contained ("Send the budget to Priya").
+  quote = the exact words from the transcript or a slide it came from, copied verbatim.
+  Items whose quote is not in the transcript or slides are thrown away, so never paraphrase it.
+  action = "email" when the item is sending something (a file, an update, a reply) to a named person, else "todo".
+  For email: to = that person's name, subject = short, body = 2 to 4 plain sentences from the wearer to them.
+  action = "calendar" when a meeting or time block was agreed with a specific day and time. Then start is
+  YYYY-MM-DDTHH:MM in the wearer's local time (resolve "Friday at five" from the current date given), duration_min
+  defaults to 30, and text is a short title ("Demo sync with Nayan"). A vague time ("sometime", "soon") is a todo.
+  For todo: to, subject, body and start are empty strings.
 Empty lists if nothing. Ignore small talk."""
 
 ANSWER_PROMPT = """You answer questions for someone wearing smart glasses, using only their memories below.
@@ -90,7 +113,7 @@ def _openai_json(system: str, user: str) -> dict:
 
 
 def see(jpeg: bytes) -> dict:
-    """Frame -> {"objects": [{name, place}], "activity": str, "receipt": ...} via Gemini 4."""
+    """Frame -> {"objects": [{name, place}], "activity": str, "receipt": ..., "scene": {type, confidence, text}} via Gemini 4."""
     return _gemini_json(GEMINI_MODEL, [
         {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(jpeg).decode()}},
         {"text": VISION_PROMPT},
@@ -120,6 +143,14 @@ def transcribe(wav: bytes) -> str:
 
 def extract_tasks(transcript: str, receipts: list[str] = ()) -> dict:
     return _think(EXTRACT_PROMPT, json.dumps({"recent_receipts": list(receipts), "transcript": transcript}))
+
+
+def make_notes(transcript: str, slide_texts: list[str]) -> dict:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo(os.environ.get("TIMEZONE", "America/Los_Angeles")))
+    return _think(NOTES_PROMPT, json.dumps({"now_local": now.strftime("%A %Y-%m-%d %H:%M"),
+                                            "transcript": transcript, "slides": slide_texts}))
 
 
 def embed(text: str) -> list[float]:

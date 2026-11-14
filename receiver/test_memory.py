@@ -1,0 +1,107 @@
+"""One check for memory: a frame and a transcript become searchable rows, and the endpoints serve them.
+
+Models are faked (no keys, no network): embed = bag of words, so search behaves predictably.
+Run: .venv/bin/python -m pytest -q
+"""
+
+import math
+import os
+import re
+import tempfile
+from collections import Counter
+from pathlib import Path
+
+os.environ.setdefault("VEXO_DATA_DIR", tempfile.mkdtemp())
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+import memory  # noqa: E402
+import models  # noqa: E402
+import voice  # noqa: E402
+import server  # noqa: E402
+
+DIM = 256
+
+
+def fake_embed(text: str) -> list[float]:
+    v = [0.0] * DIM
+    for w, n in Counter(re.findall(r"[a-z]+", text.lower())).items():
+        v[hash(w) % DIM] += n
+    return v
+
+
+def fake_answer(question, mems):
+    return {"answer": f"{mems[0]['text']} {mems[0]['place'] or ''}".strip(), "memory_id": mems[0]["id"]}
+
+
+def test_frame_and_transcript_become_memories(monkeypatch):
+    monkeypatch.setattr(models, "embed", fake_embed)
+    monkeypatch.setattr(models, "answer", fake_answer)
+    monkeypatch.setattr(models, "see", lambda jpeg: {
+        "objects": [{"name": "Keys", "place": "on the kitchen counter"}], "activity": "making coffee"})
+    monkeypatch.setattr(models, "extract_tasks", lambda text, receipts=(): (
+        {"tasks": [{"text": "Send the pitch deck to Sam", "from_whom": "Sam", "due": "5pm",
+                    "quote": "send me the pitch deck by 5pm"},
+                   {"text": "Buy Sam a car", "quote": "you promised me a car"}],  # never said: dropped
+         "done": []}
+        if "send me" in text else
+        {"tasks": [], "done": [{"text": "sent the deck to Sam", "quote": "I sent the deck to Sam"}]}))
+    monkeypatch.setattr(memory, "MIN_SIM", 0.1)
+    monkeypatch.setattr(server, "PUBLIC_BASE_URL", "https://tunnel.example")
+
+    frame = Path(tempfile.mkdtemp()) / "123.jpg"
+    frame.write_bytes(b"\xff\xd8\xff")
+    memory.process_frame(frame)
+    memory.process_frame(frame)  # same object, same place: refreshed, not duplicated
+
+    memory._transcript[:] = ["hey can you send me the pitch deck by 5pm"]
+    memory.flush_transcript()
+
+    c = TestClient(server.app)
+    items = c.get("/items").json()
+    assert [(i["name"], i["place"]) for i in items] == [("keys", "on the kitchen counter")]
+    assert items[0]["image_url"] == "https://tunnel.example/frames/123.jpg"
+
+    tasks = c.get("/tasks").json()
+    assert [t["text"] for t in tasks] == ["Send the pitch deck to Sam (from Sam, due 5pm)"]
+    assert [(f["kind"], f["ref"]) for f in c.get("/feed").json()] == [("task", tasks[0]["id"])]
+
+    a = c.post("/ask", data={"text": "where are my keys"}).json()
+    assert "kitchen counter" in a["answer"] and a["frame"] == "123.jpg"
+
+    # Saying it's done closes the task via semantic match.
+    memory._transcript[:] = ["ok I sent the deck to Sam"]
+    memory.flush_transcript()
+    assert c.get("/tasks").json() == []
+
+    assert c.post("/ask", data={"text": "zebra migration"}).json()["answer"] == "I don't have a memory of that."
+    assert c.post("/tasks/999999/done").status_code == 404
+    assert c.post("/ask", data={"text": "  "}).status_code == 422
+
+
+def test_wake_word_answers_aloud(monkeypatch):
+    spoken = []
+    monkeypatch.setattr(voice, "speak", spoken.append)
+    monkeypatch.setattr(voice, "_cooldown_until", 0.0)
+    monkeypatch.setattr(memory, "ask", lambda q: {"question": q, "answer": "On the kitchen counter.",
+                                                  "memory_id": 1, "frame": "123.jpg"})
+    said = iter(["Hey Vexo,", "where did I leave my keys?", "Thank you."])
+    monkeypatch.setattr(models, "transcribe", lambda wav: next(said))
+    before = len(memory._transcript)
+    last_card = max([c["id"] for c in memory.cards_after(0)] or [0])
+
+    wav = Path(tempfile.mkdtemp()) / "a.wav"
+    wav.write_bytes(b"RIFF")
+    for _ in range(3):
+        memory.process_audio(wav)
+
+    assert spoken == ["On the kitchen counter."]
+    [card] = memory.cards_after(last_card)
+    assert (card["kind"], card["title"]) == ("answer", "where did I leave my keys?")
+    assert len(memory._transcript) == before  # question and Whisper's "Thank you." kept out of tasks
+
+
+def test_wake_regex_variants():
+    for s in ["hey vexo what's on my list", "Hey, Vexa. what did Sam ask", "ok vexxo where's my wallet"]:
+        assert voice.WAKE.search(s), s
+    assert not voice.WAKE.search("the vortex of hey")

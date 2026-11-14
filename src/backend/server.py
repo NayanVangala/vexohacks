@@ -26,7 +26,7 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 
@@ -199,6 +199,16 @@ async def payment_reject(pid: int):
 @app.get("/feed")
 async def feed(after: int = 0):
     return [{**c, "image_url": _frame_url(c["frame"])} for c in memory.cards_after(after)]
+
+
+@app.post("/client-log")
+async def client_log(request: Request):
+    """The glasses web app has no devtools: it beacons load info and errors here."""
+    body = (await request.body())[:500].decode("utf-8", "replace")
+    print(f"GLASSES {body}", flush=True)
+    with open(DATA_DIR / "glasses.log", "a") as f:   # so it can be read without the server terminal
+        f.write(f"{time.strftime('%H:%M:%S')} {request.client.host if request.client else '?'} {body}\n")
+    return {"ok": True}
 
 
 @app.get("/today")

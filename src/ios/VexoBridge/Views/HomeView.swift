@@ -609,7 +609,6 @@ private struct IntroView: View {
     @State private var lit = 0
     @State private var picked: Int?          // a word the wearer tapped: shows its line, stops the auto-cycle
     @State private var bloom = false
-    @State private var roll = 0               // +1 per word down the list, -1 per word up: the star tumbles that way
 
     private var focus: Int { picked ?? lit }
 
@@ -617,11 +616,12 @@ private struct IntroView: View {
         ZStack(alignment: .topLeading) {
             Theme.action.ignoresSafeArea()
 
-            // The big star blooms in behind the words and tumbles toward whichever word you tap. Not touchable,
+            // The big star blooms in behind the words and sways in place. Not touchable,
             // so it never steals a tap from the words or Get started.
-            Star3D(color: Theme.star, spin: false, depth: 0.16, roll: roll, upright: true)
+            Star3D(color: Theme.star, depth: 0.16)
                 .frame(width: 560, height: 560)
                 .scaleEffect(bloom ? 1 : 0.25)
+                .rotationEffect(.degrees(bloom ? 0 : -45))
                 .position(x: 150, y: 470)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
@@ -645,7 +645,6 @@ private struct IntroView: View {
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        if i != focus { roll += i > focus ? 1 : -1 }
                         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { picked = picked == i ? nil : i }
                     }
                     .accessibilityElement(children: .combine)

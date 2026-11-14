@@ -7,6 +7,7 @@ Run: .venv/bin/python -m pytest -q
 import math
 import os
 import re
+import zlib
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -26,7 +27,7 @@ DIM = 256
 def fake_embed(text: str) -> list[float]:
     v = [0.0] * DIM
     for w, n in Counter(re.findall(r"[a-z]+", text.lower())).items():
-        v[hash(w) % DIM] += n
+        v[zlib.crc32(w.encode()) % DIM] += n   # not hash(): it's salted per run, so collisions were random
     return v
 
 

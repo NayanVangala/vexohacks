@@ -41,3 +41,9 @@
     .card, .item { animation: rise .35s ease-out both; }
     @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
   }
+.card.ft { border-color: var(--rose); }
+.quote { font-size: 21px; font-style: italic; color: var(--soft); }
+.grid .span2 { grid-column: span 2; }
+.hint { font-size: 19px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grid { gap: 8px; }
+.grid button { padding: 9px 14px; font-size: 22px; }

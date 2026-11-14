@@ -85,7 +85,7 @@ function home() {
       <div class="row"><button class="primary" data-act="dismiss" data-card="${s.card.id}">OK</button></div></div>`;
   }
   const approved = state.payments.find(p => p.status === 'approved');
-  return hero + (approved ? `<div class="body">Waiting on ${usd(approved.amount_cents)} from ${esc(approved.counterparty)}: show the QR on your phone.</div>` : '') +
+  return hero + (approved ? `<div class="hint">${usd(approved.amount_cents)} from ${esc(approved.counterparty || 'someone')}: QR on your phone</div>` : '') +
     `<div class="grid nav"><button data-view="ask">Ask</button><button data-view="recent">Recent</button>
       <button data-view="tasks">Tasks · ${state.tasks.length}</button><button data-view="things">Things · ${state.things.length}</button>
       ${navTiles.map(f => f()).join('')}</div>`;

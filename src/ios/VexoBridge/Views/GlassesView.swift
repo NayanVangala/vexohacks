@@ -135,6 +135,24 @@ struct GlassesView: View {
                     number(controller.framesFromGlasses, "From glasses", 22)
                     number(controller.reconnects, "Reconnects", 22)
                 }
+                if state.cameraPermissionText.lowercased() != "granted" {
+                    // Audio works without this (it's a Bluetooth headset), the camera does not.
+                    // Opens Meta AI's approval sheet for Scene's camera access.
+                    Button {
+                        Task { await controller.ensureCameraPermission() }
+                    } label: {
+                        HStack {
+                            Image(systemName: "camera.fill")
+                            Text("Allow camera in Meta AI").font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                        }
+                        .foregroundStyle(Theme.card)
+                        .padding(.horizontal, 18).padding(.vertical, 14)
+                        .background(Theme.ink, in: Capsule())
+                    }
+                    .buttonStyle(.squish)
+                }
                 VStack(spacing: 0) {
                     row("Microphone", state.audioInputPortName)
                     row("Display", controller.displayState == "none" ? "Off" : controller.displayState.capitalized)

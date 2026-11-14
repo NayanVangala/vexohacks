@@ -2,36 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- ================================================================
-	     CLAUDE-ios.md §5 — the complete required set.
-	     Missing any one of the first four blocks produces a failure that
-	     looks like something else entirely.
-	     ================================================================ -->
-
-	<!-- §5.1 MWDAT block -->
-	<key>MWDAT</key>
-	<dict>
-		<key>AppLinkURLScheme</key>
-		<string>vexobridge://</string>
-		<!-- Developer-Mode placeholders. Real values come from a gitignored
-		     Secrets.xcconfig via these build settings — never inline them
-		     here (§5.1, §12). Defaults to "0" when the setting is absent. -->
-		<key>MetaAppID</key>
-		<string>$(META_APP_ID)</string>
-		<key>ClientToken</key>
-		<string>$(CLIENT_TOKEN)</string>
-		<key>TeamID</key>
-		<string>$(DEVELOPMENT_TEAM)</string>
-		<!-- Device Access Toolkit App Model. SDK 0.7.0 requires it for
-		     MWDATDisplay; camera works with or without it (CHANGELOG 0.7.0).
-		     If camera streaming regresses on real glasses, flip this first. -->
-		<key>DAMEnabled</key>
-		<false/>
-	</dict>
-
-	<!-- §5.2 URL scheme — the registration callback. Omit this and Meta AI
-	     can never hand registration back; permission grants silently never
-	     complete. -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -45,65 +15,55 @@
 			</array>
 		</dict>
 	</array>
-
-	<!-- Lets the SDK's canOpenURL check detect and launch Meta AI. -->
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>fb-viewapp</string>
 	</array>
-
-	<!-- §5.3 Background modes and Bluetooth.
-	     None of these grant real background capture — see §11.1.
-	     `external-accessory` + UISupportedExternalAccessoryProtocols are
-	     documented in the SDK guide but absent from the shipped CameraAccess
-	     sample; add only if a device refuses to connect (§14.6). -->
+	<key>MWDAT</key>
+	<dict>
+		<key>AppLinkURLScheme</key>
+		<string>vexobridge://</string>
+		<key>ClientToken</key>
+		<string>$(CLIENT_TOKEN)</string>
+		<key>DAMEnabled</key>
+		<false/>
+		<key>MetaAppID</key>
+		<string>$(META_APP_ID)</string>
+		<key>TeamID</key>
+		<string>$(DEVELOPMENT_TEAM)</string>
+	</dict>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Needed to connect to your Meta glasses</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_bonjour._tcp</string>
+		<string>_scene._tcp</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Used only in testing, to stand in for the glasses camera with MockDeviceKit.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Scene sends what your glasses see and hear to the laptop on your network.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Scene records audio from your glasses microphone.</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>processing</string>
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 	</array>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Needed to connect to your Meta glasses</string>
-
-	<!-- §5.4 Local network. The SDK needs NSBonjourServices for its WiFi
-	     transport. The bridge needs NSLocalNetworkUsageDescription for a second,
-	     more important reason: every POST to the laptop is local-network
-	     traffic and is blocked until the user taps Allow (§11.2). -->
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Scene sends what your glasses see and hear to the laptop on your network.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_bonjour._tcp</string>
-		<!-- receiver/run.sh advertises this; Discovery.swift finds the laptop by it. -->
-		<string>_scene._tcp</string>
-	</array>
-
-	<!-- §5.5 App Transport Security. The narrow key, NOT NSAllowsArbitraryLoads:
-	     it permits cleartext to .local, link-local and unqualified hostnames
-	     plus private IP literals — exactly the laptop, and nothing else. -->
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
-
-	<!-- §5.6 Usage descriptions. No NSPhotoLibraryAddUsageDescription —
-	     the app never writes to the photo library. -->
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Scene records audio from your glasses microphone.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Used only in testing, to stand in for the glasses camera with MockDeviceKit.</string>
-
-	<!-- §4 Portrait only, matching the sample. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
-	<key>UIApplicationSceneManifest</key>
-	<dict>
-		<key>UIApplicationSupportsMultipleScenes</key>
-		<false/>
-	</dict>
 </dict>
 </plist>

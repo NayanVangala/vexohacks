@@ -501,10 +501,13 @@ final class WearablesManager {
             // Only with DAM on: Display requires it, and DAM is the one change that
             // could affect the camera. Flip MWDAT.DAMEnabled in Info.plist to test
             // camera-only vs camera+display on real glasses.
-            if Self.damEnabled {
+            // DAM (the Device Access Toolkit app model) is on because Ray-Ban Display sessions may
+            // require it, but the phone-driven display stays off: the glasses' own Scene web app
+            // (src/glasses) draws the cards. Launch with -sceneDATDisplay YES to attach it anyway.
+            if Self.damEnabled && UserDefaults.standard.bool(forKey: "sceneDATDisplay") {
                 await glassesDisplay.attach(to: session)
             } else {
-                BridgeState.log("DISPLAY skipped: MWDAT.DAMEnabled is off (camera-only build)")
+                BridgeState.log("DISPLAY skipped: cards come from the glasses web app (DAM \(Self.damEnabled ? "on" : "off"))")
             }
 
             #if DEBUG

@@ -45,6 +45,13 @@ D-pad focus + pinch to act, about 10 KB, no dependencies). The backend serves it
 it shares an origin with the API. It shows what needs you (a payment to approve, a new task, the
 latest answer) and your Tasks and Things.
 
+**Follow-Through on the glasses.** Promises you hear ("I'll send you the deck by four") show up as
+cards with the exact quote that proves them. Pinch **Approve** and Follow-Through
+(`src/followthrough/`) schedules, emails, or drafts it; a promise whose quote can't be found in the
+transcript shows "Couldn't verify" and has no Approve button. The glasses reach Follow-Through
+through the Scene backend (`/ft/*` proxies to `:8002`). Set `FOLLOWTHROUGH_FORWARD_URL` in
+`src/backend/.env` to feed it what the glasses hear.
+
 **Works with the Meta Neural Band alone.** The band's D-pad gestures move focus and its pinch
 selects, so every action works without voice: approve or dismiss a payment, mark a task done,
 browse Recent, and **ask questions with a pinch** (preset questions built from what Scene has seen,

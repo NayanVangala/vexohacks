@@ -19,11 +19,10 @@ def fake(monkeypatch):
     monkeypatch.setattr(memory, "add", lambda *a, **k: 1)
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://scene.example")
     monkeypatch.setattr(orders, "_now", lambda: 1000.0)
-    with memory._db_lock:
-        memory.db().execute("DELETE FROM payments") if False else None
     orders._init()
     with memory._db_lock:
         memory.db().execute("DELETE FROM orders")
+        memory.db().execute("DELETE FROM payments")
         memory.db().commit()
     calls = []
 

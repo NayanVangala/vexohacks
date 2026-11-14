@@ -24,6 +24,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
+import agent as agent_mod
 import httpx
 import outbox
 import models
@@ -165,8 +166,48 @@ def push_card(kind: str, title: str, body: str, ref: int | None = None, frame: s
     return card
 
 
+# ---------- dining agent: location and spoken entry ----------
+
+_loc: tuple[float, float, float] | None = None   # lat, lng, when
+LOC_VALID_S = 1800
+DINING = re.compile(r"\b(order|place an order|hungry|get me|something to eat|high protein|healthy options|calories)\b", re.I)
+MAX_REPLY_WORDS = 20   # a spoken answer to the agent; longer is probably someone else's conversation
+
+
+def set_location(lat: float, lng: float) -> None:
+    global _loc
+    _loc = (lat, lng, time.time())
+
+
+def get_location() -> tuple[float, float] | None:
+    """The device's latest fix (30 minutes), else SCENE_LOCATION="lat,lng" from the env, else None."""
+    if _loc and time.time() - _loc[2] <= LOC_VALID_S:
+        return _loc[0], _loc[1]
+    env = os.environ.get("SCENE_LOCATION", "")
+    try:
+        lat, lng = (float(x) for x in env.split(","))
+        return lat, lng
+    except ValueError:
+        return None
+
+
+def dining_turn(text: str, wake: bool = False) -> bool:
+    """Route speech to the dining agent: an answer to its waiting question, or (after the wake word) a new request."""
+    if agent.state()["status"] == "waiting" and len(text.split()) <= MAX_REPLY_WORDS:
+        agent.reply(text)
+        return True
+    if wake and DINING.search(text):
+        agent.start(text)
+        return True
+    return False
+
+
 def cards_after(card_id: int) -> list[dict]:
     return [c for c in list(_cards) if c["id"] > card_id]
+
+
+agent = agent_mod.Agent(say=voice.speak, where=lambda: get_location(),
+                        push=lambda kind, title, body, ref: push_card(kind, title, body, ref=ref))
 
 
 def _norm(s: str) -> str:
@@ -226,7 +267,11 @@ def process_audio(path: Path) -> None:
     if notes.active() and STOP_NOTES.search(text):
         finish_notes()
         return
+    if dining_turn(text):
+        return
     question = voice.heard(text)
+    if question and dining_turn(question, wake=True):
+        return
     if question:  # a question to Scene is not a task someone gave you: keep it out of the transcript
         out = ask(question)
         push_card("answer", question, out["answer"], ref=out["memory_id"], frame=out["frame"])

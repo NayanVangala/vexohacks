@@ -29,9 +29,11 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+import orders
 import outbox
 import memory
 import models
@@ -275,6 +277,69 @@ async def event_dismiss(draft_id: int):
         raise HTTPException(status_code=409, detail=str(e))
 
 
+class LocationIn(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+class ReplyIn(BaseModel):
+    text: str
+
+
+@app.post("/location")
+async def location(body: LocationIn):
+    """The device's position, for "nearest McDonald's". Valid for 30 minutes."""
+    memory.set_location(body.lat, body.lng)
+    return {"ok": True}
+
+
+@app.get("/agent")
+async def agent_state():
+    return memory.agent.state()
+
+
+@app.post("/agent/reply")
+async def agent_reply(body: ReplyIn):
+    """Yes/No buttons on the glasses (or a typed answer) for the question the dining agent is waiting on."""
+    try:
+        memory.agent.reply(body.text)
+    except KeyError:
+        raise HTTPException(status_code=409, detail="no question is waiting")
+    return memory.agent.state()
+
+
+@app.post("/orders/{order_id}/approve")
+async def order_approve(order_id: int):
+    """The glasses' Pay button: the human-in-the-loop gate. Creates the Stripe Checkout Session (test mode)."""
+    try:
+        return await run_in_threadpool(orders.approve, order_id)
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/orders/{order_id}/reject")
+async def order_reject(order_id: int):
+    try:
+        orders.reject(order_id)
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"rejected": order_id}
+
+
+@app.get("/orders/{order_id}")
+async def order_status(order_id: int):
+    try:
+        await run_in_threadpool(orders.refresh, order_id)
+        return orders.status_view(order_id)
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/order/{order_id}", response_class=HTMLResponse)
+async def order_page(order_id: int):
+    return (Path(__file__).parent / "orders.html").read_text()
+
+
 class SceneIn(BaseModel):
     type: str
     confidence: float
@@ -299,6 +364,22 @@ async def dev_scene(body: SceneIn):
     return {"ok": True}
 
 
+@app.post("/dev/say")
+async def dev_say(body: ReplyIn):
+    """Demo without a mic: say this to Scene as if it were heard (answers a waiting question or starts a request)."""
+    _dev_only()
+    if not await run_in_threadpool(memory.dining_turn, body.text, True):
+        raise HTTPException(status_code=422, detail="not a dining request and no question is waiting")
+    return memory.agent.state()
+
+
+@app.post("/dev/location")
+async def dev_location(body: LocationIn):
+    _dev_only()
+    memory.set_location(body.lat, body.lng)
+    return {"ok": True}
+
+
 @app.post("/dev/line")
 async def dev_line(body: LineIn):
     """Demo without a mic: add a spoken line to the active note session. Needs SCENE_DEV=1."""
@@ -318,7 +399,7 @@ async def log_visitors(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path
     if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log",
-                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/dev")):
+                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/location", "/agent", "/orders", "/order", "/dev")):
         with open(DATA_DIR / "glasses.log", "a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {request.method} {path} -> {response.status_code} "
                     f"ua={request.headers.get('user-agent', '?')[:160]}\n")

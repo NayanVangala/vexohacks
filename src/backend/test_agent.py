@@ -1,8 +1,13 @@
 """The dining agent: a function-calling loop that pauses on ask_user. The model is scripted, lookups are fakes."""
-import pytest
+import os
+import tempfile
 
-import agent as agent_mod
-import payments
+os.environ.setdefault("SCENE_DATA_DIR", tempfile.mkdtemp())  # before anything imports memory
+
+import pytest  # noqa: E402
+
+import agent as agent_mod  # noqa: E402
+import payments  # noqa: E402
 
 PLACES = [{"name": "McDonald's", "address": "441 Sutter St", "distance_mi": 0.1, "open_now": True},
           {"name": "McDonald's", "address": "609 Market St", "distance_mi": 0.3, "open_now": True}]

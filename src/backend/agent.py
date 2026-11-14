@@ -14,8 +14,7 @@ import time
 
 import lookup
 import models
-import orders
-import payments
+# orders and payments import memory, which imports this module: they are imported inside the functions that use them.
 
 TOOL_BUDGET = 8            # tool calls per user turn before the agent gives up
 IDLE_S = 600.0
@@ -76,9 +75,14 @@ class Agent:
         self.sync = sync
         self.find = find or (lambda q, w: lookup.find_nearby(q, w))
         self.menu = menu or (lambda place, wanted="": lookup.get_menu(place, wanted))
-        self.propose = propose or orders.propose
+        self.propose = propose or self._propose
         self._lock = threading.Lock()
         self._reset()
+
+    @staticmethod
+    def _propose(place: dict, lines: list[dict]) -> dict:
+        import orders
+        return orders.propose(place, lines)
 
     def _reset(self) -> None:
         self.status, self.question, self.hist = "idle", None, []
@@ -148,13 +152,15 @@ class Agent:
     # ---- tools ----
 
     def _tool(self, name: str, a: dict) -> dict:
-        try:
-            return getattr(self, "_t_" + name)(a)
-        except AttributeError:
+        fn = getattr(self, "_t_" + name, None)
+        if fn is None:
             return {"error": f"unknown tool {name}"}
-        except payments.PaymentError as e:
-            return {"error": str(e)}
+        try:
+            return fn(a)
         except Exception as e:
+            from payments import PaymentError
+            if isinstance(e, PaymentError):
+                return {"error": str(e)}
             print(f"agent: tool {name} failed: {e!r}", flush=True)
             return {"error": f"{name} failed, try again or ask the user"}
 

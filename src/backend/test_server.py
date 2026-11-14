@@ -58,3 +58,22 @@ def test_output_mode_setting():
     assert c.get("/settings").json()["output"] == "cards" and not voice.speaks()
     assert c.post("/settings", data={"output": "shout"}).status_code == 422
     c.post("/settings", data={"output": "both"})
+
+
+def test_speech_is_queued_for_the_glasses(monkeypatch):
+    import voice
+    monkeypatch.setattr(voice, "SPEAK_ON", "glasses")
+    monkeypatch.setattr(voice, "synthesize", lambda text: (b"ID3fake-mp3", "audio/mpeg"))
+    voice.set_output_mode("both")
+    c = TestClient(server.app)
+    last = max([u["id"] for u in c.get("/speech").json()] or [0])
+    voice.speak("Your keys are on the shelf.")
+    [u] = c.get(f"/speech?after={last}").json()
+    assert u["text"] == "Your keys are on the shelf."
+    r = c.get(f"/speech/{u['id']}")
+    assert r.status_code == 200 and r.headers["content-type"] == "audio/mpeg" and r.content == b"ID3fake-mp3"
+    voice.set_output_mode("cards")
+    voice.speak("silent")                       # cards-only: nothing queued
+    assert c.get(f"/speech?after={u['id']}").json() == []
+    voice.set_output_mode("both")
+    assert c.get("/speech/999999").status_code == 404

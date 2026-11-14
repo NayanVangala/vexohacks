@@ -139,6 +139,10 @@ final class BridgeController {
         memory.onNewCard = { [weak self] card in
             self?.wearables.glassesDisplay.show(card)
         }
+        // Scene's voice plays from the phone, which iOS routes to the glasses' speakers.
+        memory.onSpeech = { [weak self] audio in
+            self?.player.speak(audio)
+        }
 
         // NOTHING in this initializer may touch the MWDAT SDK. SwiftUI evaluates
         // an App's stored properties before its init() body, so this runs before

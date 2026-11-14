@@ -4,9 +4,11 @@
 //
 //  Activation chime. CLAUDE-ios.md §7.10.
 //
-//  Answer playback on the phone is unused: answers are spoken on the laptop. Read
-//  §11.5 before adding any: TTS out over the HFP channel while recording over
-//  it gives telephone-grade audio and may duck or drop the recording.
+//  Also Scene's spoken lines (ElevenLabs answers, "Want me to…?" questions): the
+//  phone plays them and iOS routes them to the glasses' speakers. That's clean
+//  because recording now uses the iPhone mic, so the glasses' Bluetooth isn't
+//  also carrying a recording (playing and recording over HFP together gives
+//  telephone-grade audio and can drop the recording).
 //
 
 import AVFoundation
@@ -48,9 +50,37 @@ final class AudioPlayer: NSObject {
         }
     }
 
+    // MARK: - Spoken lines
+
+    /// Lines waiting their turn: a new answer never cuts off the one being spoken.
+    private var queue: [Data] = []
+
+    func speak(_ audio: Data) {
+        queue.append(audio)
+        if player == nil { playNext() }
+    }
+
+    private func playNext() {
+        guard !queue.isEmpty else { return }
+        let data = queue.removeFirst()
+        do {
+            let player = try AVAudioPlayer(data: data)
+            player.delegate = self
+            self.player = player
+            player.prepareToPlay()
+            player.play()
+            BridgeState.log("SPEAK on \(AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? "?")")
+        } catch {
+            BridgeState.logError("speech playback", error)
+            self.player = nil
+            playNext()
+        }
+    }
+
     func stop() {
         player?.stop()
         player = nil
+        queue.removeAll()
     }
 }
 
@@ -58,6 +88,7 @@ extension AudioPlayer: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor [weak self] in
             self?.player = nil
+            self?.playNext()
         }
     }
 

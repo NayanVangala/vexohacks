@@ -57,6 +57,12 @@ struct Today: Decodable, Equatable, Sendable {
     let nowHour: Int
 }
 
+struct Utterance: Decodable, Sendable {
+    let id: Int
+    let text: String
+    let ts: Double
+}
+
 struct AskResult: Decodable, Sendable {
     let question: String
     let answer: String
@@ -150,6 +156,10 @@ final class MemoryStore {
     /// Called once per genuinely new card, so the glasses can show it.
     var onNewCard: ((Card) -> Void)?
 
+    /// Called with each new spoken line's audio (ElevenLabs MP3), to play on the glasses' speakers.
+    var onSpeech: ((Data) -> Void)?
+    private var lastSpeech = -1   // -1: first poll only catches up, never replays old lines
+
     private var lastCardId = 0
     private var failures = 0
     private var primed = false
@@ -183,6 +193,7 @@ final class MemoryStore {
                 if primed { new.forEach { onNewCard?($0) } } else if let last = new.last { onNewCard?(last) }
             }
             primed = true
+            await playNewSpeech()
             await refreshLists()
             if let c = checkout, c.status == "approved" {
                 checkout = try await backend.get("/payments/\(c.id)")
@@ -197,6 +208,19 @@ final class MemoryStore {
                 backend.setBaseURL(found)
                 BridgeState.log("found receiver via Bonjour at \(found)")
             }
+        }
+    }
+
+    private func playNewSpeech() async {
+        guard let lines: [Utterance] = try? await backend.get("/speech?after=\(max(lastSpeech, 0))") else { return }
+        let catchingUp = lastSpeech < 0
+        lastSpeech = max(lastSpeech, lines.map(\.id).max() ?? 0, 0)
+        guard !catchingUp else { return }
+        for line in lines where Date().timeIntervalSince1970 - line.ts < 30 {   // stale lines aren't worth saying
+            guard let url = URL(string: "\(backend.baseURL)/speech/\(line.id)"),
+                  let (data, response) = try? await URLSession.shared.data(from: url),
+                  (response as? HTTPURLResponse)?.statusCode == 200 else { continue }
+            onSpeech?(data)
         }
     }
 

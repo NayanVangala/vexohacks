@@ -109,10 +109,68 @@ def speaks() -> bool:
     return output_mode() in ("voice", "both")
 
 
+# Where speech plays. "glasses" (default): queued for the phone, which plays it and iOS routes it to
+# the glasses' speakers over Bluetooth. "laptop": the laptop's speakers. "both": either way.
+SPEAK_ON = os.environ.get("SCENE_SPEAK_ON", "glasses")
+
+from collections import deque as _deque  # noqa: E402
+import itertools as _itertools           # noqa: E402
+
+_utterances: _deque = _deque(maxlen=30)
+_utterance_ids = _itertools.count(1)
+_audio_cache: dict[int, tuple[bytes, str]] = {}
+
+
 def speak(text: str) -> None:
     """Fire and forget: never blocks the audio lane. Silent when the wearer chose cards only."""
     if not speaks():
         return
+    if SPEAK_ON in ("glasses", "both"):
+        _utterances.append({"id": next(_utterance_ids), "text": text, "ts": time.time()})
+    if SPEAK_ON in ("laptop", "both"):
+        _play_on_laptop(text)
+
+
+def utterances_after(n: int) -> list[dict]:
+    """What the phone hasn't played yet (it polls with the last id it saw)."""
+    return [u for u in list(_utterances) if u["id"] > n]
+
+
+def audio_for(utterance_id: int) -> tuple[bytes, str] | None:
+    """ElevenLabs MP3 for one queued line (macOS `say` AIFF without a key). Cached: the phone may retry."""
+    if utterance_id in _audio_cache:
+        return _audio_cache[utterance_id]
+    u = next((u for u in list(_utterances) if u["id"] == utterance_id), None)
+    if u is None:
+        return None
+    out = synthesize(u["text"])
+    _audio_cache[utterance_id] = out
+    for old in [k for k in _audio_cache if k < utterance_id - 30]:
+        _audio_cache.pop(old, None)
+    return out
+
+
+def synthesize(text: str) -> tuple[bytes, str]:
+    key = os.environ.get("ELEVENLABS_API_KEY", "")
+    if key and key != "REPLACE_ME":
+        try:
+            r = httpx.post(f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE}",
+                           headers={"xi-api-key": key}, timeout=15,
+                           json={"text": text, "model_id": ELEVEN_MODEL})
+            r.raise_for_status()
+            return r.content, "audio/mpeg"
+        except Exception as e:
+            print(f"voice: ElevenLabs failed ({e!r}), falling back to say", flush=True)
+    with tempfile.NamedTemporaryFile(suffix=".aiff", delete=False) as f:
+        path = f.name
+    subprocess.run(["say", "-o", path, text], check=True, timeout=20)
+    with open(path, "rb") as f:
+        data = f.read()
+    os.unlink(path)
+    return data, "audio/aiff"
+
+
+def _play_on_laptop(text: str) -> None:
     key = os.environ.get("ELEVENLABS_API_KEY", "")
     if key and key != "REPLACE_ME":
         try:

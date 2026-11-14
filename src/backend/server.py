@@ -452,6 +452,21 @@ async def client_log(request: Request):
     return {"ok": True}
 
 
+@app.get("/speech")
+async def speech_list(after: int = 0):
+    """Lines Scene wants said; the phone plays each on the glasses' speakers."""
+    return voice.utterances_after(after)
+
+
+@app.get("/speech/{utterance_id}")
+async def speech_audio(utterance_id: int):
+    out = await run_in_threadpool(voice.audio_for, utterance_id)
+    if out is None:
+        raise HTTPException(status_code=404, detail="no such line")
+    data, media_type = out
+    return Response(data, media_type=media_type)
+
+
 @app.get("/settings")
 async def settings_get():
     """`output` is null until the wearer picks, so the glasses app knows to ask."""

@@ -37,7 +37,7 @@ struct VexoBridgeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(controller: controller)
+            RootView(controller: controller)
                 .task {
                     await controller.onLaunch()
                 }

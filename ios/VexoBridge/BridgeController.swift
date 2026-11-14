@@ -31,6 +31,9 @@ final class BridgeController {
 
     let backend = BackendClient()
     private let wearables = WearablesManager()
+
+    /// Feed, tasks, things, payments. Drives the phone screens AND the glasses.
+    let memory: MemoryStore
     private let player = AudioPlayer()
 
     #if DEBUG
@@ -88,6 +91,8 @@ final class BridgeController {
     // MARK: - Init — all wiring happens once, here.
 
     init() {
+        memory = MemoryStore(backend: backend)
+
         // Passive chunker: every full 2.5 s window goes straight to /capture.
         passiveChunker = AudioChunker { [weak self] wav in
             Task { @MainActor in
@@ -129,6 +134,12 @@ final class BridgeController {
             self?.framePipeline.handle(frame)
         }
 
+        // Every new card goes to the glasses; their buttons act through the store.
+        wearables.glassesDisplay.store = memory
+        memory.onNewCard = { [weak self] card in
+            self?.wearables.glassesDisplay.show(card)
+        }
+
         // NOTHING in this initializer may touch the MWDAT SDK. SwiftUI evaluates
         // an App's stored properties before its init() body, so this runs before
         // Wearables.configure() — and `Wearables.shared` traps if read first.
@@ -146,6 +157,7 @@ final class BridgeController {
         let granted = await GlassesAudioRecorder.requestMicrophonePermission()
         BridgeState.log("microphone permission: \(granted ? "granted" : "DENIED")")
         await pingBackend()
+        memory.startPolling()
 
         #if DEBUG
         // Unattended MockDeviceKit runs (docs/VERIFICATION.md):

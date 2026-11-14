@@ -14,6 +14,8 @@ curl -s localhost:8001/stats | head -c 60; echo            # Scene answers
 curl -s localhost:8001/inbox; echo                         # [] when nothing is waiting
 ```
 
+- [ ] Run `scripts/preflight.sh`: it checks every key, every service, the tunnel and Slack/Stripe/Gemini without printing a
+      secret, and ends with "N fail, N warn". Fix every FAIL before testing; read the WARNs.
 - [ ] Glasses charged and cool. Scene web app **closed** on the glasses (camera can't run while it's open).
 - [ ] Phone: Scene app open, backend = tunnel URL, Glasses tab says **Streaming**, Microphone = **iPhone Microphone**.
 - [ ] Camera light on. Frames climbing in the Glasses tab.

@@ -94,6 +94,30 @@ Tuning (env): `SCENE_NEED_FRAMES` (3), `SCENE_MIN_CONF` (0.6), `SCENE_SHOWN_COOL
 `SCENE_DECLINED_COOLDOWN_S` (1800), `SCENE_OFFER_EXPIRE_S` (60). Design:
 `docs/superpowers/specs/2026-11-14-scene-awareness-design.md`.
 
+## Agentic ordering: "hey Scene, place an order at McDonald's"
+
+A real tool-using agent (`agent.py`), not a script. It finds the nearest place (Gemini + Google Maps), reads the
+device location (`POST /location`, `SCENE_LOCATION="lat,lng"`, or asks "where are you?"), **asks you to confirm the
+place**, looks up that place's menu and prices (Gemini + Google Search), builds the cart from what you say, and
+**asks again** with an order card (Pay / Not now). It can only propose: Pay is the only thing that touches Stripe,
+and every line must come from the menu it just fetched (the total is computed in code). Stripe is test mode
+(`STRIPE_SECRET_KEY=sk_test_...`, `PUBLIC_BASE_URL` for the return page); after payment the order page
+(`/order/<id>`, phone friendly) moves received, preparing, ready. The kitchen is a demo and the page says so;
+prices come from the web and may differ at the store. "What's high protein here?" uses the same lookups.
+
+```bash
+# no glasses: SCENE_DEV=1 and a test point (San Francisco)
+curl -s -X POST :8001/dev/location -H 'content-type: application/json' -d '{"lat":37.7879,"lng":-122.4075}'
+curl -s -X POST :8001/dev/say -H 'content-type: application/json' -d '{"text":"can you place an order at mcdonalds"}'
+curl -s -X POST :8001/dev/say -H 'content-type: application/json' -d '{"text":"yes"}'                          # confirm the place
+curl -s -X POST :8001/dev/say -H 'content-type: application/json' -d '{"text":"a big mac and a small fries"}'  # order card appears on /feed
+curl -s -X POST :8001/orders/1/approve                                                                        # Pay: returns the Stripe url
+```
+
+Speed: place and menu lookups use `GEMINI_GROUNDED_MODEL` (default `gemini-3.1-flash-lite`, about 2 s each;
+`gemini-4-hydrogen` is more thorough but takes about 40 s). Kitchen timers: `KITCHEN_PREP_S` (10), `KITCHEN_READY_S` (40).
+Design: `docs/superpowers/specs/2026-11-14-menu-ordering-design.md`.
+
 ## Built to be accessible
 
 - **Hands-free by default.** Ask out loud ("hey scene"), hear the answer spoken back, approve with

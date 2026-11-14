@@ -17,6 +17,9 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-4-hydrogen")
 OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 OPENAI_EMBED_MODEL = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-small")
 OPENAI_STT_MODEL = os.environ.get("OPENAI_STT_MODEL", "whisper-1")
+# Grounded (Maps/Search) calls: hydrogen takes ~40 s for these, flash-lite ~3 s but is less grounded. Speed wins
+# live; set GEMINI_GROUNDED_MODEL=gemini-4-hydrogen when accuracy matters more than the wait.
+GEMINI_GROUNDED_MODEL = os.environ.get("GEMINI_GROUNDED_MODEL", "gemini-3.1-flash-lite")
 GEMINI_TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL", GEMINI_MODEL)  # used only when OpenAI is absent
 GEMINI_EMBED_MODEL = os.environ.get("GEMINI_EMBED_MODEL", "gemini-embedding-001")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -143,6 +146,27 @@ def transcribe(wav: bytes) -> str:
 
 def extract_tasks(transcript: str, receipts: list[str] = ()) -> dict:
     return _think(EXTRACT_PROMPT, json.dumps({"recent_receipts": list(receipts), "transcript": transcript}))
+
+
+def grounded(prompt: str, tool: str, latlng: tuple[float, float] | None = None) -> str:
+    """One Gemini call with a grounding tool ("google_maps" or "google_search"). Returns the answer text."""
+    body = {"contents": [{"parts": [{"text": prompt}]}], "tools": [{tool: {}}]}
+    if latlng:
+        body["toolConfig"] = {"retrievalConfig": {"latLng": {"latitude": latlng[0], "longitude": latlng[1]}}}
+    out = _gemini(f"models/{GEMINI_GROUNDED_MODEL}:generateContent", json=body, timeout=90)
+    return "".join(p.get("text", "") for p in out["candidates"][0]["content"]["parts"])
+
+
+def agent_step(system: str, history: list[dict], tools: list[dict]) -> dict:
+    """One turn of the dining agent: Gemini function calling. Returns {text, call: {name, args} | None, parts}.
+    `parts` is the model's raw turn; the caller replays it so thought signatures survive."""
+    out = _gemini(f"models/{GEMINI_MODEL}:generateContent", timeout=60, json={
+        "systemInstruction": {"parts": [{"text": system}]}, "contents": history,
+        "tools": [{"functionDeclarations": tools}], "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}}})
+    parts = out["candidates"][0]["content"].get("parts", [])
+    fc = next((p["functionCall"] for p in parts if "functionCall" in p), None)
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip() or None
+    return {"text": None if fc else text, "call": {"name": fc["name"], "args": fc.get("args", {})} if fc else None, "parts": parts}
 
 
 def make_notes(transcript: str, slide_texts: list[str]) -> dict:

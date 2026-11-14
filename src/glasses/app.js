@@ -53,7 +53,12 @@ function spotlight() {
   // An offer only matters while it is fresh (the server expires it after 60 s).
   const offer = state.cards.find(c => c.kind === 'offer' && !state.dismissed.has(c.id) && Date.now() / 1000 - c.ts < 60);
   if (offer) return { kind: 'offer', card: offer };
-  const card = state.cards.find(c => !state.dismissed.has(c.id) && c.kind !== 'payment' && c.kind !== 'offer');
+  // The dining agent's question (fresh for 2 minutes) and the order it proposed come before everything else.
+  const ask = state.cards.find(c => c.kind === 'confirm' && !state.dismissed.has(c.id) && Date.now() / 1000 - c.ts < 120);
+  if (ask) return { kind: 'confirm', card: ask };
+  const order = state.cards.find(c => c.kind === 'order' && !state.dismissed.has(c.id));
+  if (order) return { kind: 'order', card: order };
+  const card = state.cards.find(c => !state.dismissed.has(c.id) && c.kind !== 'payment' && c.kind !== 'offer' && c.kind !== 'confirm' && c.kind !== 'order');
   return card ? { kind: card.kind, card } : null;
 }
 
@@ -71,6 +76,16 @@ function home() {
       <div class="body">from ${esc(s.pay.counterparty || 'someone')} · ${esc(s.pay.memo)}</div>
       <div class="row"><button class="primary" data-act="approve" data-id="${s.pay.id}">Approve</button>
       <button data-act="reject" data-id="${s.pay.id}">Not now</button></div></div>`;
+  } else if (s?.kind === 'confirm') {
+    hero = `<div class="card task"><div class="eyebrow">Scene asks</div>
+      <div class="title">${esc(s.card.body)}</div>
+      <div class="row"><button class="primary" data-act="agent-yes" data-card="${s.card.id}">Yes</button>
+      <button data-act="agent-no" data-card="${s.card.id}">No</button></div></div>`;
+  } else if (s?.kind === 'order') {
+    hero = `<div class="card payment"><div class="eyebrow">${esc(s.card.title)}</div>
+      <div class="title">${esc(s.card.body)}</div>
+      <div class="row"><button class="primary" data-act="order-pay" data-id="${s.card.ref}" data-card="${s.card.id}">Pay</button>
+      <button data-act="order-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
   } else if (s?.kind === 'offer') {
     hero = `<div class="card task"><div class="eyebrow">Scene noticed</div>
       <div class="title">${esc(s.card.body)}</div>
@@ -170,6 +185,12 @@ $app.addEventListener('click', async e => {
     if (act === 'approve') { await api(`/payments/${id}/approve`, 'POST'); state.note = 'Requested. Show the QR on your phone.'; }
     if (act === 'reject') await api(`/payments/${id}/reject`, 'POST');
     if (act === 'done' && id) await api(`/tasks/${id}/done`, 'POST');
+    if (act === 'agent-yes' || act === 'agent-no') await api('/agent/reply', 'POST', { text: act === 'agent-yes' ? 'yes' : 'no' }).catch(() => {});
+    if (act === 'order-pay') {
+      await api(`/orders/${id}/approve`, 'POST');
+      state.note = `Pay on your phone: ${location.origin}/order/${id}`;
+    }
+    if (act === 'order-no') await api(`/orders/${id}/reject`, 'POST').catch(() => {});
     if (act === 'offer-yes') { await api(`/offers/${id}/accept`, 'POST').catch(() => {}); state.note = 'Taking notes.'; }
     if (act === 'offer-no') await api(`/offers/${id}/decline`, 'POST').catch(() => {});
     if (act === 'email-send') {
@@ -207,7 +228,14 @@ document.addEventListener('keydown', e => {
 });
 
 // Start after every script has loaded, so extensions are registered before the first render.
+// Also share the device position for "nearest McDonald's". Silent when the browser has none or it is denied.
+function sendLocation() {
+  navigator.geolocation?.getCurrentPosition(
+    p => api('/location', 'POST', { lat: p.coords.latitude, lng: p.coords.longitude }).catch(() => {}), () => {}, { maximumAge: 300000 });
+}
 window.addEventListener('load', () => {
+  sendLocation();
+  setInterval(sendLocation, 300000);
   poll();
   setInterval(poll, 2000);   // one light poll, not an animation loop: fine for the 30 Hz panel
 });

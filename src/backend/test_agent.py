@@ -1,0 +1,141 @@
+"""The dining agent: a function-calling loop that pauses on ask_user. The model is scripted, lookups are fakes."""
+import os
+import tempfile
+
+os.environ.setdefault("SCENE_DATA_DIR", tempfile.mkdtemp())  # before anything imports memory
+
+import pytest  # noqa: E402
+
+import agent as agent_mod  # noqa: E402
+import payments  # noqa: E402
+
+PLACES = [{"name": "McDonald's", "address": "441 Sutter St", "distance_mi": 0.1, "open_now": True},
+          {"name": "McDonald's", "address": "609 Market St", "distance_mi": 0.3, "open_now": True}]
+MENU = [{"id": "big-mac", "name": "Big Mac", "price_cents": 899, "calories": 580, "protein_g": 25},
+        {"id": "fries-small", "name": "Fries (Small)", "price_cents": 419, "calories": 230, "protein_g": 2},
+        {"id": "mcchicken", "name": "McChicken", "price_cents": 599, "calories": 400, "protein_g": 14},
+        {"id": "qpc", "name": "Quarter Pounder with Cheese", "price_cents": 849, "calories": 520, "protein_g": 30}]
+
+
+def call(name, **args):
+    return {"text": None, "call": {"name": name, "args": args}, "parts": [{"functionCall": {"name": name, "args": args}}]}
+
+
+def text(t):
+    return {"text": t, "call": None, "parts": [{"text": t}]}
+
+
+class Rig:
+    def __init__(self, script, where=(37.78, -122.41)):
+        self.script, self.said, self.pushed, self.menu_calls, self.proposed, self.steps = list(script), [], [], [], [], []
+        self.agent = agent_mod.Agent(
+            step=self.step, say=self.said.append, push=lambda *a: self.pushed.append(a), where=lambda: where, sync=True,
+            find=lambda q, w: PLACES, menu=self.menu, propose=self.propose)
+
+    def step(self, system, history, tools):
+        self.steps.append(history[-1])
+        return self.script.pop(0)
+
+    def menu(self, place, wanted=""):
+        self.menu_calls.append(place["address"])
+        return MENU
+
+    def propose(self, place, lines):
+        total = sum(l["price_cents"] * l["qty"] for l in lines)
+        if total > 5000:
+            raise payments.PaymentError("over cap")
+        self.proposed.append((place, lines))
+        return {"id": 7, "total_cents": total, "place_name": place["name"], "address": place["address"], "items": lines}
+
+
+def test_flow_find_confirm_menu_order():
+    r = Rig([call("find_nearby", query="McDonald's"),
+             call("ask_user", question="The nearest McDonald's is 441 Sutter St, 0.1 miles. Order from there?"),
+             call("get_menu", place_index=0),
+             call("ask_user", question="What would you like?"),
+             call("propose_order", items=[{"name": "Big Mac", "qty": 1}, {"name": "fries small", "qty": 1}])])
+    r.agent.start("can you place an order at mcdonalds")
+    assert r.agent.state()["status"] == "waiting" and "441 Sutter" in r.agent.state()["question"]
+    assert r.said[0].lower().startswith("on it") and r.pushed[-1][0] == "confirm"
+    r.agent.reply("yes")
+    assert r.agent.state()["status"] == "waiting" and r.menu_calls == ["441 Sutter St"]
+    r.agent.reply("a big mac and small fries")
+    assert r.agent.state()["status"] == "done"
+    place, lines = r.proposed[0]
+    assert place["address"] == "441 Sutter St" and [(l["name"], l["qty"], l["price_cents"]) for l in lines] == [
+        ("Big Mac", 1, 899), ("Fries (Small)", 1, 419)]
+    assert r.pushed[-1][0] == "order" and r.pushed[-1][3] == 7 and "$13.18" in r.pushed[-1][2]
+
+
+def test_no_at_place_confirmation_does_not_fetch_menu_for_that_place():
+    r = Rig([call("find_nearby", query="McDonald's"), call("ask_user", question="Order from 441 Sutter St?"),
+             call("ask_user", question="How about 609 Market St, 0.3 miles?"), call("get_menu", place_index=1),
+             call("ask_user", question="What would you like?")])
+    r.agent.start("order at mcdonalds")
+    r.agent.reply("no")
+    r.agent.reply("yes")
+    assert r.menu_calls == ["609 Market St"]
+
+
+def test_unknown_item_refused_and_no_order():
+    r = Rig([call("find_nearby", query="m"), call("get_menu", place_index=0),
+             call("propose_order", items=[{"name": "Sushi platter", "qty": 1}]),
+             call("ask_user", question="I don't see that. Anything else?")])
+    r.agent.start("order")
+    assert r.proposed == [] and "not on the menu" in str(r.steps[-1]).lower()
+
+
+@pytest.mark.parametrize("items,why", [([{"name": "Big Mac", "qty": 0}], "quantity"),
+                                       ([{"name": "Big Mac", "qty": 50}], "quantity"),
+                                       ([{"name": "Big Mac", "qty": 9}] * 1 + [{"name": "Quarter Pounder with Cheese", "qty": 9}], "over cap")])
+def test_qty_bounds_and_over_cap_refused(items, why):
+    r = Rig([call("find_nearby", query="m"), call("get_menu", place_index=0), call("propose_order", items=items),
+             call("ask_user", question="Try fewer?")])
+    r.agent.start("order")
+    assert r.proposed == [] and why in str(r.steps[-1]).lower()
+
+
+def test_tool_budget_ends_session_with_apology():
+    r = Rig([call("find_nearby", query="m")] * 20)
+    r.agent.start("order")
+    assert r.agent.state()["status"] == "done" and any("couldn't" in s.lower() for s in r.said)
+    assert len(r.steps) <= 9
+
+
+def test_reply_without_waiting_session_raises_keyerror():
+    r = Rig([])
+    with pytest.raises(KeyError):
+        r.agent.reply("yes")
+
+
+def test_cancel_word_ends_session():
+    r = Rig([call("find_nearby", query="m"), call("ask_user", question="Order from 441 Sutter St?")])
+    r.agent.start("order")
+    r.agent.reply("never mind")
+    assert r.agent.state()["status"] == "done" and r.proposed == []
+
+
+def test_no_location_makes_agent_ask_where():
+    r = Rig([call("find_nearby", query="McDonald's"), call("ask_user", question="Where are you right now?"),
+             call("find_nearby", query="McDonald's", near="downtown Austin"),
+             call("ask_user", question="Nearest is 441 Sutter St. Order from there?")], where=None)
+    r.agent.start("order at mcdonalds")
+    assert "no location" in str(r.steps[-1]).lower() and r.agent.state()["question"] == "Where are you right now?"
+    r.agent.reply("downtown Austin")
+    assert r.agent.state()["status"] == "waiting" and "441 Sutter" in r.agent.state()["question"]
+
+
+def test_rank_menu_protein_orders_by_protein_per_calorie():
+    r = Rig([call("find_nearby", query="m"), call("get_menu", place_index=0), call("rank_menu", goal="protein"),
+             text("The Quarter Pounder has the most protein.")])
+    r.agent.start("what's high protein at mcdonalds")
+    top = r.steps[-1]["parts"][0]["functionResponse"]["response"]["items"]
+    assert top[0]["name"] == "Quarter Pounder with Cheese" and r.agent.state()["status"] == "done"
+
+
+def test_second_start_replaces_session():
+    r = Rig([call("find_nearby", query="m"), call("ask_user", question="Order from 441 Sutter St?"),
+             call("find_nearby", query="m"), call("ask_user", question="Again?")])
+    r.agent.start("order")
+    r.agent.start("order again")
+    assert r.agent.state()["question"] == "Again?"

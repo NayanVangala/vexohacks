@@ -123,3 +123,20 @@ def test_dev_say_and_location_require_flag(monkeypatch):
     assert fake.started
     assert c.post("/dev/location", json={"lat": 3.0, "lng": 4.0}).status_code == 200 and memory.get_location() == (3.0, 4.0)
     memory._loc = None
+
+
+@pytest.mark.parametrize("said,starts", [
+    ("hey scene email Priya about the budget", True), ("can you send an email to nayan", True),
+    ("put this on my calendar for friday at 3", True), ("schedule a meeting tomorrow", True),
+    ("search up the best go pro cameras online at the moment", True), ("look up flights to tokyo", True),
+    ("remind me to call mom", True), ("can you place an order at mcdonalds", True),
+    ("where are my keys", False), ("what did sam ask me to do", False), ("does anyone owe me money", False)])
+def test_task_requests_start_the_agent_and_memory_questions_do_not(said, starts):
+    fake = FakeAgent()
+    import memory as m
+    old, m.agent = m.agent, fake
+    try:
+        assert m.dining_turn(said, wake=True) is starts
+    finally:
+        m.agent = old
+    assert bool(fake.started) is starts

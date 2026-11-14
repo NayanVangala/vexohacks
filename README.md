@@ -99,6 +99,14 @@ Tuning (env): `SCENE_NEED_FRAMES` (3), `SCENE_MIN_CONF` (0.6), `SCENE_SHOWN_COOL
 `SCENE_DECLINED_COOLDOWN_S` (1800), `SCENE_OFFER_EXPIRE_S` (60). Design:
 `docs/superpowers/specs/2026-11-14-scene-awareness-design.md`.
 
+## Task agent: "hey Scene, email Priya...", "put this on my calendar", "search up the best GoPros"
+
+After "hey Scene", requests with a task word (email, calendar, schedule, remind, search, look up, order) go to the
+same agent that does ordering (`agent.py`); anything else ("where are my keys?") stays on the fast memory path. Tools:
+`send_email` and `add_calendar_event` only DRAFT: they make the Send / Add card you approve (email goes to
+`DEMO_EMAIL_TO` only; a missing day or time makes the agent ask first), and `web_search` (Gemini + Google Search,
+`GEMINI_SEARCH_MODEL`, about 2 s) answers in one or two spoken sentences with the details and sources on a card.
+
 ## Agentic ordering: "hey Scene, place an order at McDonald's"
 
 A real tool-using agent (`agent.py`), not a script. It finds the nearest place (Gemini + Google Maps), reads the

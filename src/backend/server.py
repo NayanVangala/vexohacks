@@ -33,6 +33,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import inbox
 import orders
 import outbox
 import memory
@@ -228,6 +229,35 @@ async def notes_stop():
     return {"notes": nid}
 
 
+@app.get("/session")
+async def session():
+    """Is a note session running (for the glasses' "Taking notes" card)."""
+    return {"notes": notes.status()}
+
+
+@app.get("/notes")
+async def notes_recent(limit: int = 20):
+    """Recent meeting notes for the phone (summary and counts). The full notes are /notes/<id>."""
+    return memory.notes_list(limit)
+
+
+@app.get("/activity")
+async def activity(limit: int = 50, today: bool = True):
+    """What Scene saw, heard and did (today by default), newest first."""
+    return memory.activity(limit, today)
+
+
+@app.get("/inbox")
+async def inbox_items():
+    """Everything waiting on the wearer, each with ready-made actions the phone can call with one tap."""
+    return await run_in_threadpool(inbox.items)
+
+
+@app.get("/orders")
+async def orders_recent(limit: int = 20):
+    return await run_in_threadpool(orders.recent, limit)
+
+
 @app.get("/notes/{note_id}")
 async def notes_get(note_id: int):
     out = memory.get_notes(note_id)
@@ -278,9 +308,25 @@ async def event_dismiss(draft_id: int):
         raise HTTPException(status_code=409, detail=str(e))
 
 
-class LocationIn(BaseModel):
-    lat: float = Field(ge=-90, le=90)
-    lng: float = Field(ge=-180, le=180)
+async def _fields(request: Request) -> dict:
+    """The body as a dict, whether it was sent as JSON (our tools) or form-encoded (the glasses and phone apps)."""
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(status_code=422, detail="bad JSON")
+        return body if isinstance(body, dict) else {}
+    return dict(await request.form())
+
+
+def _coords(f: dict) -> tuple[float, float]:
+    try:
+        lat, lng = float(f["lat"]), float(f["lng"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="lat and lng are required numbers")
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        raise HTTPException(status_code=422, detail="lat or lng out of range")
+    return lat, lng
 
 
 class ReplyIn(BaseModel):
@@ -288,9 +334,9 @@ class ReplyIn(BaseModel):
 
 
 @app.post("/location")
-async def location(body: LocationIn):
-    """The device's position, for "nearest McDonald's". Valid for 30 minutes."""
-    memory.set_location(body.lat, body.lng)
+async def location(request: Request):
+    """The device's position, for "nearest McDonald's". Valid for 30 minutes. JSON or form."""
+    memory.set_location(*_coords(await _fields(request)))
     return {"ok": True}
 
 
@@ -300,10 +346,13 @@ async def agent_state():
 
 
 @app.post("/agent/reply")
-async def agent_reply(body: ReplyIn):
-    """Yes/No buttons on the glasses (or a typed answer) for the question the dining agent is waiting on."""
+async def agent_reply(request: Request):
+    """Yes/No buttons on the glasses (or a typed answer) for the question the dining agent is waiting on. JSON or form."""
+    text = str((await _fields(request)).get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="text is required")
     try:
-        memory.agent.reply(body.text)
+        memory.agent.reply(text)
     except KeyError:
         raise HTTPException(status_code=409, detail="no question is waiting")
     return memory.agent.state()
@@ -375,9 +424,9 @@ async def dev_say(body: ReplyIn):
 
 
 @app.post("/dev/location")
-async def dev_location(body: LocationIn):
+async def dev_location(request: Request):
     _dev_only()
-    memory.set_location(body.lat, body.lng)
+    memory.set_location(*_coords(await _fields(request)))
     return {"ok": True}
 
 
@@ -403,7 +452,7 @@ async def log_visitors(request: Request, call_next):
         # The glasses' WebView otherwise keeps an old app.js after an update.
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
     if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log",
-                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/location", "/agent", "/orders", "/order", "/dev")):
+                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/location", "/agent", "/orders", "/order", "/inbox", "/activity", "/session", "/dev")):
         with open(DATA_DIR / "glasses.log", "a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {request.method} {path} -> {response.status_code} "
                     f"ua={request.headers.get('user-agent', '?')[:160]}\n")

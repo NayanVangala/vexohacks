@@ -50,8 +50,6 @@ _conn: sqlite3.Connection | None = None
 # Frame lane is small on purpose: if Gemini falls behind, drop frames rather than answer about the past.
 _lanes = {"frame": queue.Queue(maxsize=3), "audio": queue.Queue(maxsize=50)}
 _workers: dict[str, threading.Thread] = {}
-_cards: deque = deque(maxlen=50)
-_card_ids = itertools.count(1)
 _last_frame = 0.0
 _last_extract = time.time()
 _transcript: list[str] = []
@@ -77,6 +75,12 @@ def db() -> sqlite3.Connection:
             ts REAL NOT NULL,
             status TEXT,                 -- open | done (tasks only)
             embedding TEXT               -- JSON list[float]
+        )""")
+        # Cards live in the DB so the phone's lastCardId stays valid across a backend restart.
+        _conn.execute("""CREATE TABLE IF NOT EXISTS cards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,
+            ref INTEGER, frame TEXT, ts REAL NOT NULL
         )""")
     return _conn
 
@@ -159,11 +163,19 @@ def on_audio(path: Path) -> None:
 # ---------- cards for the glasses ----------
 
 def push_card(kind: str, title: str, body: str, ref: int | None = None, frame: str | None = None) -> dict:
-    """kind: answer | task | payment. ref = task or payment id, so the glasses' buttons know what to act on."""
-    card = {"id": next(_card_ids), "kind": kind, "title": title, "body": body,
-            "ref": ref, "frame": frame, "ts": time.time()}
-    _cards.append(card)
-    return card
+    """kind: answer | task | payment | offer | notes | email | calendar | confirm | order. ref = the id the buttons act on."""
+    ts = time.time()
+    with _db_lock:
+        cid = db().execute("INSERT INTO cards (kind, title, body, ref, frame, ts) VALUES (?,?,?,?,?,?)",
+                           (kind, title, body, ref, frame, ts)).lastrowid
+        db().commit()
+    return {"id": cid, "kind": kind, "title": title, "body": body, "ref": ref, "frame": frame, "ts": ts}
+
+
+def clear_cards() -> None:
+    with _db_lock:
+        db().execute("DELETE FROM cards")
+        db().commit()
 
 
 # ---------- dining agent: location and spoken entry ----------
@@ -203,7 +215,9 @@ def dining_turn(text: str, wake: bool = False) -> bool:
 
 
 def cards_after(card_id: int) -> list[dict]:
-    return [c for c in list(_cards) if c["id"] > card_id]
+    """Cards newer than card_id, oldest first, at most the newest 50."""
+    return rows("SELECT * FROM (SELECT * FROM cards WHERE id > ? ORDER BY id DESC LIMIT 50) ORDER BY id", card_id)
+
 
 
 agent = agent_mod.Agent(say=voice.speak, where=lambda: get_location(),
@@ -352,6 +366,25 @@ def finish_notes() -> int | None:
     push_card("notes", "Meeting notes", out["summary"] or "No summary.", ref=nid)
     print(f"memory: NOTES #{nid} ({len(out['action_items'])} tasks, {len(out['slides'])} slides)", flush=True)
     return nid
+
+
+def notes_list(limit: int = 20) -> list[dict]:
+    """Recent meeting notes for the phone: newest first, with counts. Full notes are GET /notes/<id>."""
+    out = []
+    for r in rows("SELECT id, text, ts FROM memories WHERE kind='notes' ORDER BY ts DESC, id DESC LIMIT ?", limit):
+        n = get_notes(r["id"]) or {}
+        out.append({"id": r["id"], "summary": n.get("summary") or r["text"], "ts": r["ts"],
+                    "decisions": len(n.get("decisions", [])), "action_items": len(n.get("action_items", [])),
+                    "slides": len(n.get("slides", []))})
+    return out
+
+
+def activity(limit: int = 50, today: bool = True) -> list[dict]:
+    """What Scene took in and did, newest first: events (seen, approved, paid), tasks and notes. Objects are not activity."""
+    lt = time.localtime()
+    since = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1)) if today else 0
+    return rows("SELECT id, kind, text, status, frame, ts FROM memories WHERE kind IN ('event','task','notes') AND ts >= ? "
+                "ORDER BY ts DESC, id DESC LIMIT ?", since, limit)
 
 
 def get_notes(note_id: int) -> dict | None:

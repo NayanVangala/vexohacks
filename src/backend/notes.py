@@ -50,6 +50,13 @@ def active() -> bool:
     return _session is not None
 
 
+def status() -> dict:
+    """For the glasses: is a note session running, since when, how much has it caught."""
+    if _session is None:
+        return {"active": False, "started": None, "slides": 0, "lines": 0}
+    return {"active": True, "started": _session.started, "slides": len(_session.slides), "lines": len(_session.lines)}
+
+
 def add_line(text: str) -> None:
     if _session is not None and text:
         _session.lines.append(text)

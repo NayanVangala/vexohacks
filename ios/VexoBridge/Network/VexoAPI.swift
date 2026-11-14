@@ -49,6 +49,14 @@ struct Payment: Decodable, Identifiable, Equatable, Sendable {
     var who: String { counterparty.isEmpty ? "someone" : counterparty }
 }
 
+struct Today: Decodable, Equatable, Sendable {
+    let memories: Int
+    let openTasks: Int
+    let things: Int
+    let hourly: [Int]      // 24 buckets, laptop's local time
+    let nowHour: Int
+}
+
 struct AskResult: Decodable, Sendable {
     let question: String
     let answer: String
@@ -123,6 +131,7 @@ final class MemoryStore {
     private(set) var tasks: [OpenTask] = []
     private(set) var things: [Thing] = []
     private(set) var payments: [Payment] = []
+    private(set) var today: Today?
     private(set) var online = false
     private(set) var lastAnswer: AskResult?
     private(set) var asking = false
@@ -188,9 +197,11 @@ final class MemoryStore {
         async let t: [OpenTask] = backend.get("/tasks")
         async let i: [Thing] = backend.get("/items")
         async let p: [Payment] = backend.get("/payments")
+        async let d: Today = backend.get("/today")
         if let t = try? await t { tasks = t }
         if let i = try? await i { things = i }
         if let p = try? await p { payments = p }
+        if let d = try? await d, d != today { today = d }
     }
 
     func payment(_ id: Int?) -> Payment? {

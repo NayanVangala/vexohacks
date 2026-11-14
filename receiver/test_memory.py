@@ -75,6 +75,8 @@ def test_frame_and_transcript_become_memories(monkeypatch):
     assert c.get("/tasks").json() == []
 
     assert c.post("/ask", data={"text": "zebra migration"}).json()["answer"] == "I don't have a memory of that."
+    t = c.get("/today").json()
+    assert t["memories"] >= 3 and len(t["hourly"]) == 24 and sum(t["hourly"]) == t["memories"]
     assert c.post("/tasks/999999/done").status_code == 404
     assert c.post("/ask", data={"text": "  "}).status_code == 422
 

@@ -277,3 +277,21 @@ def open_tasks(limit: int = 6) -> list[dict]:
 def items(limit: int = 6) -> list[dict]:
     return rows("""SELECT id, text AS name, place, frame, MAX(ts) AS ts FROM memories
                    WHERE kind='object' GROUP BY text ORDER BY ts DESC LIMIT ?""", limit)
+
+
+def today() -> dict:
+    """Home-screen numbers: what Vexo took in today, by hour (laptop's local time)."""
+    lt = time.localtime()
+    midnight = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    ts = [r["ts"] for r in rows("SELECT ts FROM memories WHERE ts >= ?", midnight)]
+    hourly = [0] * 24
+    for t in ts:
+        hourly[time.localtime(t).tm_hour] += 1
+    count = lambda sql: rows(sql)[0]["n"]  # noqa: E731
+    return {
+        "memories": len(ts),
+        "open_tasks": count("SELECT COUNT(*) AS n FROM memories WHERE kind='task' AND status='open'"),
+        "things": count("SELECT COUNT(DISTINCT text) AS n FROM memories WHERE kind='object'"),
+        "hourly": hourly,
+        "now_hour": lt.tm_hour,
+    }

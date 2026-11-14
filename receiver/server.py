@@ -196,6 +196,11 @@ async def feed(after: int = 0):
     return [{**c, "image_url": _frame_url(c["frame"])} for c in memory.cards_after(after)]
 
 
+@app.get("/today")
+async def today():
+    return memory.today()
+
+
 @app.get("/items")
 async def items():
     return [{**i, "image_url": _frame_url(i["frame"])} for i in memory.items()]

@@ -38,6 +38,17 @@ SOURCE=test scripts/any-camera.sh          # synthetic frames, no camera needed
 INPUT="-f v4l2 -i /dev/video0" scripts/any-camera.sh   # Linux / Raspberry Pi camera
 ```
 
+## On the glasses: Scene web app
+
+`src/glasses/index.html` is a Meta Ray-Ban Display **Web App** (600×600, black is transparent,
+D-pad focus + pinch to act, about 10 KB, no dependencies). The backend serves it at `/glasses/`, so
+it shares an origin with the API. It shows what needs you (a payment to approve, a new task, the
+latest answer) and your Tasks and Things.
+
+Add it once on the phone: Meta AI → Devices → Display Glasses settings → App connections →
+Web apps → Add a web app → `https://<your tunnel>/glasses/` (any public HTTPS URL to the backend).
+The phone bridge then only streams camera and mic, and the glasses app draws the cards.
+
 ## Built to be accessible
 
 - **Hands-free by default.** Ask out loud ("hey scene"), hear the answer spoken back, approve with
@@ -92,6 +103,7 @@ src/backend/               laptop backend (FastAPI)
   memory.py                  ingest lanes, SQLite store, semantic search, quote checks
   voice.py                   "hey scene" wake word, spoken answers
   payments.py                Stripe Checkout behind the approval gate
+src/glasses/               Scene web app for the Ray-Ban Display (served at /glasses/)
 src/followthrough/         Follow-Through agent + web dashboard (laptop web app)
 scripts/                   start-scene.command (one-click start), any-camera.sh (any camera as a device),
                            render-icon.swift (app icon)

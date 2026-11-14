@@ -42,6 +42,11 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")  # HTTPS tun
 app = FastAPI(title="scene receiver")
 (DATA_DIR / "frames").mkdir(parents=True, exist_ok=True)
 app.mount("/frames", StaticFiles(directory=DATA_DIR / "frames"), name="frames")
+# The Meta Ray-Ban Display web app (src/glasses/). Same origin as the API, so the glasses need
+# only this one HTTPS URL (the tunnel): https://<tunnel>/glasses/
+GLASSES_DIR = Path(__file__).resolve().parent.parent / "glasses"
+if GLASSES_DIR.is_dir():
+    app.mount("/glasses", StaticFiles(directory=GLASSES_DIR, html=True), name="glasses")
 
 _lock = threading.Lock()
 _started = time.time()

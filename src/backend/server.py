@@ -317,6 +317,9 @@ async def log_visitors(request: Request, call_next):
     """Record every non-API visitor (path + user agent): shows whether the glasses fetch anything at all."""
     response = await call_next(request)
     path = request.url.path
+    if path.startswith("/glasses"):
+        # The glasses' WebView otherwise keeps an old app.js after an update.
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
     if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log",
                             "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/dev")):
         with open(DATA_DIR / "glasses.log", "a") as f:

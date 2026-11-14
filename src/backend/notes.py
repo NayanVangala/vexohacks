@@ -89,6 +89,9 @@ def build(session: Session, make=models.make_notes) -> dict:
     for item in out.get("action_items", []):
         q = norm(item.get("quote", ""))
         if len(q) >= MIN_QUOTE_CHARS and any(q in h for h in haystacks) and item.get("text"):
-            kept.append({"text": item["text"], "quote": item["quote"]})
+            keep = {"text": item["text"], "quote": item["quote"]}
+            if item.get("action") == "email" and item.get("subject") and item.get("body"):
+                keep.update(action="email", to=item.get("to", ""), subject=item["subject"], body=item["body"])
+            kept.append(keep)
     return {"summary": out.get("summary", ""), "decisions": list(out.get("decisions", [])),
             "action_items": kept, "slides": session.slides}

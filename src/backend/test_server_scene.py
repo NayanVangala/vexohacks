@@ -54,3 +54,15 @@ def test_dev_scene_and_line_when_flag_set(monkeypatch):
     notes.start(0)
     assert c.post("/dev/line", json={"text": "we ship friday"}).status_code == 200
     assert notes.stop().lines == ["we ship friday"]
+
+
+def test_email_send_and_dismiss_routes(monkeypatch):
+    import emailer
+    emailer._drafts.clear()
+    d = emailer.draft("Priya", "Budget", "Hi.", "send the budget to Priya")
+    monkeypatch.setattr(emailer, "send", lambda i: {**emailer._drafts[i], "status": "sent", "result": "Emailed"})
+    assert c.post(f"/emails/{d['id']}/send").json()["status"] == "sent"
+    assert c.post("/emails/999/send").status_code == 404
+    assert c.post(f"/emails/{d['id']}/dismiss").json()["status"] == "dismissed"
+    assert c.post(f"/emails/{d['id']}/dismiss").status_code == 409
+    assert c.post("/emails/999/dismiss").status_code == 404

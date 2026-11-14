@@ -122,3 +122,21 @@ def test_frame_without_scene_key_does_not_crash(env, monkeypatch, tmp_path):
 
 def test_get_notes_unknown_is_none(env):
     assert memory.get_notes(12345) is None
+
+
+def test_email_action_item_pushes_email_card_not_task_card(env, monkeypatch):
+    import emailer
+    emailer._drafts.clear()
+    monkeypatch.setenv("DEMO_EMAIL_TO", "ultra@example.com")
+    monkeypatch.setattr(models, "make_notes", lambda t, s: {"summary": "Sync.", "decisions": [], "action_items": [
+        {"text": "Send budget to Priya", "quote": "I will send the budget to Priya", "action": "email",
+         "to": "Priya", "subject": "Budget", "body": "Hi Priya, budget on Friday."}]})
+    three(MEETING)
+    memory.answer_offer(cards("offer")[0]["ref"], True)
+    audio(monkeypatch, "Sam: I will send the budget to Priya by Friday")
+    audio(monkeypatch, "stop notes")
+    assert cards("task") == []
+    card = cards("email")[0]
+    assert card["title"] == "Email Priya?" and "Budget" in card["body"]
+    d = emailer.get(card["ref"])
+    assert d["status"] == "proposed" and d["to"] == "ultra@example.com"      # nothing sent yet

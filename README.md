@@ -76,6 +76,12 @@ curl -s -X POST :8001/dev/line -H 'content-type: application/json' -d '{"text":"
 curl -s -X POST :8001/notes/stop                          # {"notes": <id>}, then GET /notes/<id>
 ```
 
+**Emailing.** When an action item means "send X to someone", notes turn it into an email draft card
+(Send / Not now). Send goes through the Follow-Through executor (`EXECUTOR_URL`, `EXECUTOR_TOKEN`) and the
+recipient is always `DEMO_EMAIL_TO`, never the person named. "Sent" shows only when the executor
+confirms; with no executor you get a Gmail draft link and "Nothing was sent". Set those three env vars
+in the shell that runs the backend.
+
 Tuning (env): `SCENE_NEED_FRAMES` (3), `SCENE_MIN_CONF` (0.6), `SCENE_SHOWN_COOLDOWN_S` (600),
 `SCENE_DECLINED_COOLDOWN_S` (1800), `SCENE_OFFER_EXPIRE_S` (60). Design:
 `docs/superpowers/specs/2026-11-14-scene-awareness-design.md`.

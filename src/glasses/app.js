@@ -69,6 +69,11 @@ function home() {
       <div class="title">${esc(s.card.body)}</div>
       <div class="row"><button class="primary" data-act="offer-yes" data-id="${s.card.ref}" data-card="${s.card.id}">Yes, take notes</button>
       <button data-act="offer-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
+  } else if (s.kind === 'email') {
+    hero = `<div class="card payment"><div class="eyebrow">${esc(s.card.title)}</div>
+      <div class="title">${esc(s.card.body)}</div>
+      <div class="row"><button class="primary" data-act="email-send" data-id="${s.card.ref}" data-card="${s.card.id}">Send</button>
+      <button data-act="email-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
   } else if (s.kind === 'task') {
     hero = `<div class="card task"><div class="eyebrow">New task</div>
       <div class="title">${esc(s.card.body)}</div>
@@ -147,6 +152,11 @@ $app.addEventListener('click', async e => {
     if (act === 'done' && id) await api(`/tasks/${id}/done`, 'POST');
     if (act === 'offer-yes') { await api(`/offers/${id}/accept`, 'POST').catch(() => {}); state.note = 'Taking notes.'; }
     if (act === 'offer-no') await api(`/offers/${id}/decline`, 'POST').catch(() => {});
+    if (act === 'email-send') {
+      const d = await api(`/emails/${id}/send`, 'POST');
+      state.note = d.status === 'sent' ? 'Sent. ' + d.result : d.status === 'drafted' ? d.result : 'Not sent: ' + d.result;
+    }
+    if (act === 'email-no') await api(`/emails/${id}/dismiss`, 'POST').catch(() => {});
     if (act === 'clear-answer') { state.answer = null; }
     if (act === 'ask') {
       state.asking = q; render();

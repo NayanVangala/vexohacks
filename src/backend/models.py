@@ -52,12 +52,16 @@ Items whose quote is not in the transcript are thrown away, so never paraphrase 
 Empty lists if nothing. Ignore small talk."""
 
 NOTES_PROMPT = """You turn a meeting transcript (heard by smart glasses) and the text of slides shown into notes.
-Return JSON: {"summary": str, "decisions": [str], "action_items": [{"text": str, "quote": str}]}
+Return JSON: {"summary": str, "decisions": [str],
+              "action_items": [{"text": str, "quote": str, "action": str, "to": str, "subject": str, "body": str}]}
 - summary: at most 3 plain sentences.
 - decisions: things that were decided, each one short.
 - action_items: things someone committed to do. text = imperative, self-contained ("Send the budget to Priya").
   quote = the exact words from the transcript or a slide it came from, copied verbatim.
   Items whose quote is not in the transcript or slides are thrown away, so never paraphrase it.
+  action = "email" when the item is sending something (a file, an update, a reply) to a named person, else "todo".
+  For email: to = that person's name, subject = short, body = 2 to 4 plain sentences from the wearer to them.
+  For todo: to, subject and body are empty strings.
 Empty lists if nothing. Ignore small talk."""
 
 ANSWER_PROMPT = """You answer questions for someone wearing smart glasses, using only their memories below.

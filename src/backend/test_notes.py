@@ -90,3 +90,17 @@ def test_build_with_empty_session_makes_no_model_call():
     s = notes.stop()
     out = notes.build(s, make=lambda *a: (_ for _ in ()).throw(AssertionError("no call expected")))
     assert out["action_items"] == [] and out["slides"] == []
+
+
+def test_build_keeps_email_fields_only_when_complete():
+    notes.start(0)
+    notes.add_line("Sam: I will send the budget to Priya by Friday. And I will call the venue about parking.")
+    s = notes.stop()
+    out = notes.build(s, make=lambda t, sl: {"summary": "x", "decisions": [], "action_items": [
+        {"text": "Send budget to Priya", "quote": "I will send the budget to Priya", "action": "email",
+         "to": "Priya", "subject": "Budget", "body": "Hi Priya, budget Friday."},
+        {"text": "Email nobody", "quote": "call the venue about parking", "action": "email", "to": "", "subject": "", "body": ""},
+        {"text": "Call the venue", "quote": "I will call the venue about parking", "action": "todo"}]})
+    a, b, c = out["action_items"]
+    assert (a["action"], a["to"], a["subject"]) == ("email", "Priya", "Budget")
+    assert "action" not in b and "action" not in c               # incomplete email stays a plain task

@@ -87,23 +87,58 @@ def _settings_path():
     return Path(os.environ.get("SCENE_DATA_DIR", Path(__file__).parent / "data")) / "settings.json"
 
 
-def output_mode(default: str | None = "both") -> str | None:
-    """The saved choice, or `default` if the wearer hasn't picked one yet."""
+SPEAK_TARGETS = ("glasses", "laptop", "both")
+
+
+def _read_settings() -> dict:
     import json
     try:
-        m = json.loads(_settings_path().read_text()).get("output")
-        return m if m in OUTPUT_MODES else default
+        return json.loads(_settings_path().read_text())
     except (OSError, ValueError):
-        return default
+        return {}
+
+
+def _write_settings(**changes) -> dict:
+    import json
+    cur = _read_settings()
+    cur.update(changes)
+    p = _settings_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(cur))
+    return cur
+
+
+def output_mode(default: str | None = "both") -> str | None:
+    """The saved choice, or `default` if the wearer hasn't picked one yet."""
+    m = _read_settings().get("output")
+    return m if m in OUTPUT_MODES else default
 
 
 def set_output_mode(mode: str) -> None:
-    import json
     if mode not in OUTPUT_MODES:
         raise ValueError(f"output must be one of {OUTPUT_MODES}")
-    p = _settings_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"output": mode}))
+    _write_settings(output=mode)
+
+
+def speak_on() -> str:
+    """Where speech plays; Settings on the glasses overrides SCENE_SPEAK_ON."""
+    t = _read_settings().get("speak_on") or SPEAK_ON
+    return t if t in SPEAK_TARGETS else "glasses"
+
+
+def set_speak_on(target: str) -> None:
+    if target not in SPEAK_TARGETS:
+        raise ValueError(f"speak_on must be one of {SPEAK_TARGETS}")
+    _write_settings(speak_on=target)
+
+
+def paused() -> bool:
+    """Privacy pause: while on, Scene ignores the camera and the mic."""
+    return bool(_read_settings().get("paused"))
+
+
+def set_paused(value: bool) -> None:
+    _write_settings(paused=bool(value))
 
 
 def speaks() -> bool:
@@ -126,9 +161,10 @@ def speak(text: str) -> None:
     """Fire and forget: never blocks the audio lane. Silent when the wearer chose cards only."""
     if not speaks():
         return
-    if SPEAK_ON in ("glasses", "both"):
+    target = speak_on()
+    if target in ("glasses", "both"):
         _utterances.append({"id": next(_utterance_ids), "text": text, "ts": time.time()})
-    if SPEAK_ON in ("laptop", "both"):
+    if target in ("laptop", "both"):
         _play_on_laptop(text)
 
 

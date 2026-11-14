@@ -519,17 +519,26 @@ async def speech_audio(utterance_id: int):
 @app.get("/settings")
 async def settings_get():
     """`output` is null until the wearer picks, so the glasses app knows to ask."""
-    return {"output": voice.output_mode(default=None), "modes": list(voice.OUTPUT_MODES)}
+    return {"output": voice.output_mode(default=None), "modes": list(voice.OUTPUT_MODES),
+            "speak_on": voice.speak_on(), "speak_targets": list(voice.SPEAK_TARGETS),
+            "paused": voice.paused()}
 
 
 @app.post("/settings")
-async def settings_set(output: str = Form(...)):
+async def settings_set(output: str | None = Form(None), speak_on: str | None = Form(None),
+                       paused: str | None = Form(None)):
+    """Change any subset: output (cards|voice|both), speak_on (glasses|laptop|both), paused (true|false)."""
     try:
-        voice.set_output_mode(output)
+        if output is not None:
+            voice.set_output_mode(output)
+        if speak_on is not None:
+            voice.set_speak_on(speak_on)
+        if paused is not None:
+            voice.set_paused(paused.lower() in ("1", "true", "yes", "on"))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    print(f"SETTINGS output = {output}", flush=True)
-    return {"output": output}
+    print(f"SETTINGS {dict(output=output, speak_on=speak_on, paused=paused)}", flush=True)
+    return await settings_get()
 
 
 @app.get("/today")

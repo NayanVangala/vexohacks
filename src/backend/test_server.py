@@ -54,7 +54,7 @@ def test_output_mode_setting():
     voice._settings_path().unlink(missing_ok=True)
     assert c.get("/settings").json()["output"] is None          # not chosen yet: the glasses ask
     assert voice.speaks()                                       # default until chosen: both
-    assert c.post("/settings", data={"output": "cards"}).json() == {"output": "cards"}
+    assert c.post("/settings", data={"output": "cards"}).json()["output"] == "cards"
     assert c.get("/settings").json()["output"] == "cards" and not voice.speaks()
     assert c.post("/settings", data={"output": "shout"}).status_code == 422
     c.post("/settings", data={"output": "both"})
@@ -77,3 +77,22 @@ def test_speech_is_queued_for_the_glasses(monkeypatch):
     assert c.get(f"/speech?after={u['id']}").json() == []
     voice.set_output_mode("both")
     assert c.get("/speech/999999").status_code == 404
+
+
+def test_settings_speak_on_and_privacy_pause(monkeypatch):
+    import memory
+    import voice
+    c = TestClient(server.app)
+    assert c.post("/settings", data={"speak_on": "laptop"}).json()["speak_on"] == "laptop"
+    assert c.post("/settings", data={"speak_on": "moon"}).status_code == 422
+    seen = []
+    monkeypatch.setattr(memory, "ENABLED", True)
+    monkeypatch.setattr(memory, "submit", lambda lane, fn, *a: seen.append(lane))
+    assert c.post("/settings", data={"paused": "true"}).json()["paused"] is True
+    memory.on_audio(server.DATA_DIR / "x.wav")
+    memory._last_frame = 0
+    memory.on_frame(server.DATA_DIR / "x.jpg")
+    assert seen == []                          # paused: nothing reaches the models
+    c.post("/settings", data={"paused": "false", "speak_on": "glasses"})
+    memory.on_audio(server.DATA_DIR / "x.wav")
+    assert seen == ["audio"]

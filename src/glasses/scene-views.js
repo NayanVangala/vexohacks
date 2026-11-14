@@ -50,16 +50,16 @@
       ${o.stage === 'ready' ? `<div class="row"><button class="primary" data-act="order-seen" data-id="${o.id}">OK</button></div>` : ''}</div>`;
   });
 
-  navTiles.push(() => state.inbox.length ? `<button class="span2" data-view="needs">Needs you · ${state.inbox.length}</button>` : '');
-  navTiles.push(() => `<button data-view="today">Today</button>`);
-  navTiles.push(() => state.notes.length ? `<button data-view="notes">Notes · ${state.notes.length}</button>` : '');
+  navTiles.push(() => state.inbox.length ? window.Scene.dockItem('needs', 'Needs you', state.inbox.length) : '');
+  navTiles.push(() => window.Scene.dockItem('today', 'Today'));
+  navTiles.push(() => state.notes.length ? window.Scene.dockItem('notes', 'Notes', state.notes.length) : '');
 
   // ---- Needs you: everything waiting on a yes, with the backend's ready-made actions ----
 
   views.needs = () => {
     const items = state.inbox.slice(0, 4).map(i => `<button class="item" data-act="need-open" data-key="${esc(sameKey(i))}">${esc(i.title)}
       <small>${esc(short(i.body || '', 60))}</small></button>`).join('');
-    return `<div class="eyebrow">Needs you</div>
+    return `<h2>Needs you</h2>
       <div class="list">${items || '<div class="empty">Nothing waiting on you.</div>'}</div>
       <div class="row nav"><button data-view="home">Back</button></div>`;
   };
@@ -89,7 +89,7 @@
   views.today = () => {
     const rows = state.activity.slice(0, 6).map(a => `<div class="item" tabindex="0">${esc(short(a.text, 70))}
       <small>${esc(a.kind === 'task' ? (a.status === 'done' ? 'Task done' : 'Task') : a.kind === 'notes' ? 'Meeting notes' : 'Scene')} · ${esc(ago(a.ts))}</small></div>`).join('');
-    return `<div class="eyebrow">Today</div>
+    return `<h2>Today</h2>
       <div class="list">${rows || '<div class="empty">Nothing yet today.</div>'}</div>
       <div class="row nav"><button data-view="home">Back</button></div>`;
   };
@@ -99,7 +99,7 @@
   views.notes = () => {
     const rows = state.notes.slice(0, 4).map(n => `<button class="item" data-act="note-open" data-id="${n.id}">${esc(short(n.summary, 70))}
       <small>${n.action_items} action item${n.action_items === 1 ? '' : 's'} · ${n.slides} slide${n.slides === 1 ? '' : 's'} · ${esc(ago(n.ts))}</small></button>`).join('');
-    return `<div class="eyebrow">Meeting notes</div>
+    return `<h2>Meeting notes</h2>
       <div class="list">${rows || '<div class="empty">No notes yet.</div>'}</div>
       <div class="row nav"><button data-view="home">Back</button></div>`;
   };

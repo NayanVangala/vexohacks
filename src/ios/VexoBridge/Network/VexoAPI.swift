@@ -273,6 +273,8 @@ final class MemoryStore {
     private var failures = 0
     private var primed = false
     private var pollTask: Task<Void, Never>?
+    private var speechTask: Task<Void, Never>?
+    private var fetchingSpeech = false
 
     init(backend: BackendClient) {
         self.backend = backend
@@ -284,6 +286,13 @@ final class MemoryStore {
             while !Task.isCancelled {
                 await self?.tick()
                 try? await Task.sleep(for: Self.pollInterval)
+            }
+        }
+        // Speech gets its own fast loop: an answer shouldn't wait behind the lists' refresh.
+        speechTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.playNewSpeech()
+                try? await Task.sleep(for: .milliseconds(500))
             }
         }
     }
@@ -302,7 +311,6 @@ final class MemoryStore {
                 if primed { new.forEach { onNewCard?($0) } } else if let last = new.last { onNewCard?(last) }
             }
             primed = true
-            await playNewSpeech()
             await refreshLists()
             if let c = checkout, c.status == "approved" {
                 checkout = try await backend.get("/payments/\(c.id)")
@@ -321,6 +329,9 @@ final class MemoryStore {
     }
 
     private func playNewSpeech() async {
+        guard !fetchingSpeech else { return }
+        fetchingSpeech = true
+        defer { fetchingSpeech = false }
         guard let lines: [Utterance] = try? await backend.get("/speech?after=\(max(lastSpeech, 0))") else { return }
         let catchingUp = lastSpeech < 0
         lastSpeech = max(lastSpeech, lines.map(\.id).max() ?? 0, 0)

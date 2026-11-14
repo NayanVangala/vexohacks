@@ -163,7 +163,11 @@ def speak(text: str) -> None:
         return
     target = speak_on()
     if target in ("glasses", "both"):
-        _utterances.append({"id": next(_utterance_ids), "text": text, "ts": time.time()})
+        u = {"id": next(_utterance_ids), "text": text, "ts": time.time()}
+        _utterances.append(u)
+        # Make the audio now, so it's ready the moment the phone asks (~1.5 s saved).
+        import threading
+        threading.Thread(target=audio_for, args=(u["id"],), daemon=True).start()
     if target in ("laptop", "both"):
         _play_on_laptop(text)
 
@@ -173,8 +177,19 @@ def utterances_after(n: int) -> list[dict]:
     return [u for u in list(_utterances) if u["id"] > n]
 
 
+_synth_locks: dict[int, "object"] = {}
+
+
 def audio_for(utterance_id: int) -> tuple[bytes, str] | None:
-    """ElevenLabs MP3 for one queued line (macOS `say` AIFF without a key). Cached: the phone may retry."""
+    """ElevenLabs MP3 for one queued line (macOS `say` AIFF without a key). Made once: the background
+    pre-synthesis and the phone's request share one lock per line, so it's never generated twice."""
+    import threading
+    lock = _synth_locks.setdefault(utterance_id, threading.Lock())
+    with lock:
+        return _audio_for_locked(utterance_id)
+
+
+def _audio_for_locked(utterance_id: int) -> tuple[bytes, str] | None:
     if utterance_id in _audio_cache:
         return _audio_cache[utterance_id]
     u = next((u for u in list(_utterances) if u["id"] == utterance_id), None)
@@ -182,6 +197,8 @@ def audio_for(utterance_id: int) -> tuple[bytes, str] | None:
         return None
     out = synthesize(u["text"])
     _audio_cache[utterance_id] = out
+    for old in [k for k in list(_synth_locks) if k < utterance_id - 30]:
+        _synth_locks.pop(old, None)
     for old in [k for k in _audio_cache if k < utterance_id - 30]:
         _audio_cache.pop(old, None)
     return out

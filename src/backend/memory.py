@@ -48,7 +48,9 @@ DONE_MATCH = 0.5         # cosine needed for "I sent the deck" to close "Send th
 _db_lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
 # Frame lane is small on purpose: if Gemini falls behind, drop frames rather than answer about the past.
-_lanes = {"frame": queue.Queue(maxsize=3), "audio": queue.Queue(maxsize=50)}
+# "extract" holds the slow transcript work (task extraction, Follow-Through's GPT-4o run, often
+# 5-15 s) so it never sits in front of a "hey scene" question on the audio lane.
+_lanes = {"frame": queue.Queue(maxsize=3), "audio": queue.Queue(maxsize=50), "extract": queue.Queue(maxsize=20)}
 _workers: dict[str, threading.Thread] = {}
 _last_frame = 0.0
 _last_extract = time.time()
@@ -306,7 +308,7 @@ def process_audio(path: Path) -> None:
     notes.add_line(text)
     _transcript.append(text)
     if time.time() - _last_extract >= EXTRACT_EVERY_S and _transcript:
-        flush_transcript()
+        flush_transcript(background=True)
 
 
 # ---------- scene awareness: offers and notes (see docs/superpowers/specs/2026-11-14-scene-awareness-design.md) ----------
@@ -394,11 +396,20 @@ def get_notes(note_id: int) -> dict | None:
     return json.loads(p.read_text()) if p.is_file() else None
 
 
-def flush_transcript() -> None:
+def flush_transcript(background: bool = False) -> None:
     global _last_extract
     text = " ".join(_transcript)
     _transcript.clear()
     _last_extract = time.time()
+    if background:
+        submit("extract", _process_transcript, text)
+    else:
+        _process_transcript(text)
+
+
+def _process_transcript(text: str) -> None:
+    # ponytail: runs on the extract lane while the audio lane keeps going; the shared state it touches
+    # (sqlite under _db_lock, Follow-Through's question queue) is small. Add locks if it grows.
     receipts = [r["text"] for r in rows(
         "SELECT text FROM memories WHERE kind='event' AND text LIKE 'Receipt:%' AND ts > ?", time.time() - 3600)]
     forward_to_followthrough(text)

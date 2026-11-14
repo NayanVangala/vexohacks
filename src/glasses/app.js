@@ -10,6 +10,23 @@ report('loaded ' + innerWidth + 'x' + innerHeight + ' ' + navigator.userAgent);
 // Kept dependency-free: well under the 300 KB first-load budget, one request.
 const STAR = '<svg viewBox="0 0 100 100" aria-hidden="true"><path fill="#F7D27E" d="M50 0 C51.5 40 60 48.5 100 50 C60 51.5 51.5 60 50 100 C48.5 60 40 51.5 0 50 C40 48.5 48.5 40 50 0Z"/><path fill="#F7D27E" opacity=".85" d="M50 26 C51 46 54 49 74 50 C54 51 51 54 50 74 C49 54 46 51 26 50 C46 49 49 46 50 26Z" transform="rotate(45 50 50)"/></svg>';
 const $app = document.getElementById('app');
+
+// Line icons (24 grid, drawn with currentColor) for the dock and header.
+const ICON = {
+  ask: '<path d="M4.5 5.5h15v10h-9l-4.5 3.8v-3.8h-1.5z"/>',
+  recent: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  tasks: '<circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.4l2.6 2.6 5-5.4"/>',
+  things: '<circle cx="8.5" cy="8.5" r="4"/><path d="M11.5 11.5l8 8M16 16l2-2M18.2 18.2l1.6-1.6"/>',
+  followups: '<path d="M5 12h12.5M13 7l5 5-5 5"/><path d="M5 7v10"/>',
+  needs: '<path d="M4 13.5l2.2-7h11.6l2.2 7v5H4z"/><path d="M4 13.5h4.5l1 2h5l1-2H20"/>',
+  today: '<circle cx="12" cy="12" r="3.6"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6L18 18M6 18l1.4-1.4M16.6 7.4L18 6"/>',
+  notes: '<path d="M6.5 3.5h8l3.5 3.5v13.5h-11.5z"/><path d="M14.5 3.5V7H18M9 11.5h6M9 15h6"/>',
+  settings: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/>',
+};
+const icon = name => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name] || ''}</svg>`;
+/** One dock entry: icon always, label and count only when focused (the CSS reveals them). */
+const dockItem = (view, label, n) =>
+  `<button data-view="${view}" aria-label="${label}${n ? ', ' + n : ''}">${icon(view)}${n ? `<span class="n">${n}</span>` : ''}<span class="lbl">${label}</span></button>`;
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const usd = c => '$' + (c / 100).toFixed(2);
 const ago = ts => { const m = Math.round((Date.now() / 1000 - ts) / 60); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : Math.round(m / 60) + ' h ago'; };
@@ -24,7 +41,7 @@ const pollers = [];    // async () => void            (runs every 2 s; write res
 const actions = {};    // data-act -> async dataset => void   (a pinch on <button data-act="...">)
 const heroes = [];     // () => html | null            (Home's big card; first non-null wins, after payments)
 const navTiles = [];   // () => html                   (extra buttons in Home's bottom grid)
-window.Scene = { state, views, pollers, actions, heroes, navTiles, api, esc, ago, render };
+window.Scene = { state, views, pollers, actions, heroes, navTiles, api, esc, ago, render, dockItem, icon };
 
 async function api(path, method = 'GET', form) {
   const r = await fetch(path, form ? { method, body: new URLSearchParams(form) } : { method });
@@ -76,9 +93,9 @@ function home() {
       <div class="title">${esc(state.answer.answer)}</div>
       <div class="row"><button class="primary" data-act="clear-answer">OK</button><button data-view="ask">Ask more</button></div></div>`;
   } else if (s?.kind === 'payment') {
-    hero = `<div class="card payment"><div class="eyebrow">Needs you</div>
+    hero = `<div class="card payment"><div class="eyebrow">${esc(s.pay.counterparty || 'Someone')} owes you, for ${esc(s.pay.memo)}</div>
       <div class="big">${usd(s.pay.amount_cents)}</div>
-      <div class="body">from ${esc(s.pay.counterparty || 'someone')} · ${esc(s.pay.memo)}</div>
+      <div class="body">Request it? Your phone shows them a QR.</div>
       <div class="row"><button class="primary" data-act="approve" data-id="${s.pay.id}">Approve</button>
       <button data-act="reject" data-id="${s.pay.id}">Not now</button></div></div>`;
   } else if (s?.kind === 'confirm') {
@@ -109,11 +126,11 @@ function home() {
   } else if (ext) {
     hero = ext;
   } else if (!s) {
-    hero = `<div class="card"><div class="eyebrow">All clear</div>
-      <div class="title">Scene is remembering</div>
-      <div class="body">Say “hey scene” to ask anything you've seen or heard.</div></div>`;
+    hero = `<div class="card calm"><div class="glow"></div>
+      <div class="title">Nothing needs you.</div>
+      <div class="body">${state.things.length ? `Keeping track of ${state.things.length} thing${state.things.length === 1 ? '' : 's'} today.` : 'Scene is remembering.'} Say “hey scene” anytime.</div></div>`;
   } else if (s.kind === 'task') {
-    hero = `<div class="card task"><div class="eyebrow">New task</div>
+    hero = `<div class="card task"><div class="eyebrow">You were asked to</div>
       <div class="title">${esc(s.card.body)}</div>
       <div class="row"><button class="primary" data-act="done" data-id="${s.card.ref}" data-card="${s.card.id}">Done</button>
       <button data-act="dismiss" data-card="${s.card.id}">Later</button></div></div>`;
@@ -123,23 +140,22 @@ function home() {
       <div class="row"><button class="primary" data-act="dismiss" data-card="${s.card.id}">OK</button></div></div>`;
   }
   const approved = state.payments.find(p => p.status === 'approved');
-  return hero + (approved ? `<div class="hint">${usd(approved.amount_cents)} from ${esc(approved.counterparty || 'someone')}: QR on your phone</div>` : '') +
-    `<div class="grid nav"><button data-view="ask">Ask</button><button data-view="recent">Recent</button>
-      <button data-view="tasks">Tasks · ${state.tasks.length}</button><button data-view="things">Things · ${state.things.length}</button>
-      ${navTiles.map(f => f()).join('')}</div>`;
+  return `<div class="stage">${hero}</div>` +
+    (approved ? `<div class="hint">Waiting on ${usd(approved.amount_cents)} from ${esc(approved.counterparty || 'someone')}. QR is on your phone.</div>` : '') +
+    `<nav class="dock">${dockItem('ask', 'Ask')}${dockItem('tasks', 'Tasks', state.tasks.length)}${dockItem('things', 'Things', state.things.length)}${navTiles.map(f => f()).join('')}${dockItem('recent', 'Recent')}</nav>`;
 }
 
 function tasks() {
   const items = state.tasks.slice(0, 4).map(t =>
-    `<button class="item" data-act="done" data-id="${t.id}">${esc(t.text)}<small>pinch to mark done · ${ago(t.ts)}</small></button>`).join('');
-  return `<div class="eyebrow">Tasks</div><div class="list">${items || '<div class="empty">Nothing open.</div>'}</div>
+    `<button class="item" data-act="done" data-id="${t.id}">${esc(t.text)}<small>${ago(t.ts)}, pinch when done</small></button>`).join('');
+  return `<h2>Tasks</h2><div class="list">${items || '<div class="empty">Nothing open. Promises you make show up here.</div>'}</div>
     <div class="row nav"><button data-view="home">Back</button></div>`;
 }
 
 function things() {
   const items = state.things.slice(0, 4).map(t =>
-    `<div class="item" tabindex="0">${esc(t.name[0].toUpperCase() + t.name.slice(1))}<small>${esc(t.place || '')} · ${ago(t.ts)}</small></div>`).join('');
-  return `<div class="eyebrow">Things</div><div class="list">${items || '<div class="empty">Nothing seen yet.</div>'}</div>
+    `<div class="item" tabindex="0">${esc(t.name[0].toUpperCase() + t.name.slice(1))}<small>${esc(t.place || '')}, ${ago(t.ts)}</small></div>`).join('');
+  return `<h2>Things</h2><div class="list">${items || '<div class="empty">Nothing seen yet. Look around for a few seconds.</div>'}</div>
     <div class="row nav"><button data-view="home">Back</button></div>`;
 }
 
@@ -152,16 +168,16 @@ function questions() {
 }
 
 function ask() {
-  if (state.asking) return `<div class="eyebrow">Asking</div><div class="title">${esc(state.asking)}</div><div class="body">Thinking…</div>`;
+  if (state.asking) return `<div class="stage"><div class="card answer thinking"><div class="eyebrow">Asking</div><div class="title">${esc(state.asking)}</div><div class="body">Thinking…</div></div></div>`;
   const items = questions().map(q => `<button class="item" data-act="ask" data-q="${esc(q)}">${esc(q)}</button>`).join('');
-  return `<div class="eyebrow">Ask with a pinch</div><div class="list">${items}</div>
+  return `<h2>Ask</h2><div class="list">${items}</div>
     <div class="row nav"><button data-view="home">Back</button></div>`;
 }
 
 function recent() {
   const items = state.cards.slice(0, 4).map(c =>
-    `<div class="item" tabindex="0">${esc(c.kind === 'answer' ? c.body : c.title)}<small>${esc(c.kind === 'answer' ? c.title : c.body)} · ${ago(c.ts)}</small></div>`).join('');
-  return `<div class="eyebrow">Recent</div><div class="list">${items || '<div class="empty">Nothing yet today.</div>'}</div>
+    `<div class="item" tabindex="0">${esc(c.kind === 'answer' ? c.body : c.title)}<small>${esc(c.kind === 'answer' ? c.title : c.body)}, ${ago(c.ts)}</small></div>`).join('');
+  return `<h2>Recent</h2><div class="list">${items || '<div class="empty">Nothing yet today.</div>'}</div>
     <div class="row nav"><button data-view="home">Back</button></div>`;
 }
 
@@ -177,7 +193,7 @@ function mode() {
   const first = state.mode == null;
   const items = MODES.map(([id, name, desc]) =>
     `<button class="item" data-act="set-mode" data-q="${id}">${name}${state.mode === id ? ' · current' : ''}<small>${desc}</small></button>`).join('');
-  return `<div class="eyebrow">${first ? 'Welcome to Scene' : 'How Scene talks to you'}</div>
+  return `<h2>${first ? 'Welcome to Scene' : 'How Scene talks to you'}</h2>
     <div class="title">How should Scene tell you things?</div>
     <div class="list">${items}</div>
     ${first ? '' : '<div class="row nav"><button data-view="home">Back</button></div>'}`;
@@ -193,7 +209,7 @@ function settings() {
   const st = state.settings || {};
   const row = (act, name, value, hint) =>
     `<button class="item" data-act="${act}">${name}: ${value}<small>${hint}</small></button>`;
-  return `<div class="eyebrow">Settings</div><div class="list">
+  return `<h2>Settings</h2><div class="list">
     ${row('set-output', 'Tell me with', NAMES[state.mode] || 'Both', 'Cards on the display, speaking, or both')}
     ${row('set-speak-on', 'Speak on', NAMES[st.speak_on] || 'Glasses', 'Where Scene’s voice plays')}
     ${row('set-text', 'Text size', largeText ? 'Large' : 'Normal', 'Easier reading on the lens')}
@@ -202,7 +218,7 @@ function settings() {
 }
 
 function render() {
-  const header = `<header>${STAR}<h1>Scene</h1><button class="pill" data-view="settings">Settings</button><span class="status"><span class="dot ${state.online ? (state.settings?.paused ? 'paused' : '') : 'off'}"></span>${!state.online ? 'Offline' : state.settings?.paused ? 'Paused' : 'Live'}</span></header>`;
+  const header = `<header>${STAR}<h1>Scene</h1><button class="gear" data-view="settings" aria-label="Settings">${icon('settings')}</button><span class="status"><span class="dot ${state.online ? (state.settings?.paused ? 'paused' : '') : 'off'}"></span>${!state.online ? 'Offline' : state.settings?.paused ? 'Paused' : 'Live'}</span></header>`;
   const firstRun = state.online && state.mode == null;
   const body = firstRun ? mode() : ({ home, tasks, things, ask, recent, mode, settings, ...views }[state.view] || home)();
   const html = header + (state.note ? `<div class="body">${esc(state.note)}</div>` : '') + body;

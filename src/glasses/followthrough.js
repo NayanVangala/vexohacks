@@ -26,9 +26,9 @@
 
   /** One commitment, with its proof and the two choices. */
   function card(i, back) {
-    const meta = [KIND[i.action] || i.action, i.counterpart && 'with ' + i.counterpart, when(i.due_local)].filter(Boolean).join(' · ');
+    const meta = [`${KIND[i.action] || i.action}${i.counterpart ? ' with ' + i.counterpart : ''}`, when(i.due_local)].filter(Boolean).join(', ');
     const canApprove = i.status === 'pending';
-    return `<div class="card ft"><div class="eyebrow">Follow up · ${esc(meta)}</div>
+    return `<div class="card ft"><div class="eyebrow">${esc(meta)}</div>
       <div class="title">${esc(i.title)}</div>
       <div class="quote">“${esc(i.quote)}”</div>
       ${i.status === 'needs_review' ? `<div class="body">Couldn't verify: ${esc((i.issues || []).join('; ') || 'quote not found')}</div>` : ''}
@@ -53,20 +53,21 @@
     const next = pending()[0];
     return next ? card(next, false) : null;
   });
+  // Cards rendered inside Home's stage get the same treatment as Scene's own.
 
   // A Home tile only when there's something to follow up.
   navTiles.push(() => {
     const n = state.ft.items.filter(i => i.status === 'pending' || i.status === 'needs_review').length;
-    return n ? `<button class="span2" data-view="followups">Follow-ups · ${n}</button>` : '';
+    return n ? window.Scene.dockItem('followups', 'Promises', n) : '';
   });
 
   views.followups = () => {
     const open = state.ft.items.filter(i => i.status === 'pending' || i.status === 'needs_review').slice(0, 4);
     const items = open.map(i => `<button class="item" data-act="ft-open" data-id="${esc(i.id)}">${esc(i.title)}
-      <small>${esc(KIND[i.action] || i.action)}${i.due_local ? ' · ' + esc(when(i.due_local)) : ''}${i.status === 'needs_review' ? ' · needs review' : ''}</small></button>`).join('');
+      <small>${esc(KIND[i.action] || i.action)}${i.due_local ? ', ' + esc(when(i.due_local)) : ''}${i.status === 'needs_review' ? ', couldn’t verify' : ''}</small></button>`).join('');
     // "Approve all" covers verified, pending items only: anything that needs review stays manual.
     const ready = state.ft.items.filter(i => i.status === 'pending').length;
-    return `<div class="eyebrow">Follow-ups</div>
+    return `<h2>Promises</h2>
       <div class="list">${items || `<div class="empty">${state.ft.online ? 'Nothing to follow up.' : 'Follow-Through isn’t running on the laptop.'}</div>`}</div>
       <div class="row nav">${ready > 1 ? `<button class="primary" data-act="ft-approve-all">Approve all ${ready}</button>` : ''}
         <button data-view="home">Back</button></div>`;

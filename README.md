@@ -18,7 +18,7 @@ event; memory, payments, voice, the glasses display, and the phone app were buil
 
 ```
 Ray-Ban Display ──Bluetooth──▶ iPhone app ──Wi-Fi──▶ laptop receiver
-  camera 1 frame / 2.5 s          VexoBridge            FastAPI (receiver/)
+  camera 1 frame / 2.5 s          VexoBridge            FastAPI (src/backend/)
   mic 2.5 s chunks                feed, tasks,          Gemini 4 Hydrogen: every frame
   display cards ◀── pinch ──      things, QR            OpenAI: speech, tasks, answers
                                                         SQLite + embeddings: search
@@ -47,30 +47,32 @@ Ray-Ban Display ──Bluetooth──▶ iPhone app ──Wi-Fi──▶ laptop 
 ## Layout
 
 ```
-ios/VexoBridge/            iPhone app (SwiftUI): Now, Tasks, Things, Glasses tabs
+src/ios/VexoBridge/        iPhone app (SwiftUI): Today, Tasks, Things, Glasses tabs
   Views/HomeView.swift       phone screens + payment QR
   Network/VexoAPI.swift      API types + MemoryStore (polls /feed, drives phone and glasses)
   Wearable/GlassesDisplay.swift   cards on the Ray-Ban Display, pinch buttons
   Wearable/WearablesManager.swift glasses session, camera stream, recovery
-receiver/                  laptop backend (FastAPI)
+src/backend/               laptop backend (FastAPI)
   server.py                  /capture, /ask, /feed, /tasks, /items, /payments, /frames
   models.py                  Gemini 4 + OpenAI calls (plain REST)
   memory.py                  ingest lanes, SQLite store, semantic search, quote checks
   voice.py                   "hey vexo" wake word, spoken answers
   payments.py                Stripe Checkout behind the approval gate
+src/followthrough/         Follow-Through agent + web dashboard (laptop web app)
+scripts/                   start-vexo.command (one-click start), render-icon.swift (app icon)
 claude/                    Claude Code + ruflo workspace state
 ```
 
 ## Run
 
-**Quick start:** double-click `Start Vexo.command` on the laptop, open the Vexo app on the iPhone,
+**Quick start:** double-click `scripts/start-vexo.command` on the laptop, open the Vexo app on the iPhone,
 tap **Start**. The receiver advertises itself over Bonjour (`_vexo._tcp`) and the app finds it,
 so there's no IP to type.
 
 Receiver by hand (laptop):
 
 ```bash
-cd receiver
+cd src/backend
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env        # add GEMINI_API_KEY; OpenAI, Stripe (sk_test_), ElevenLabs optional
 ./run.sh                    # 0.0.0.0:8001, prints which keys and gemini-4 models are live

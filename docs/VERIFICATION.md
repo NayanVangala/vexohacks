@@ -12,7 +12,7 @@ Status as of 2026-11-13. "Verified" means the command was run here and its outpu
 | Debug and Release build, simulator | `-destination 'platform=iOS Simulator,…'` | `BUILD SUCCEEDED` |
 | SDK pin | Package.resolved, pbxproj | `0.7.0`, `kind = exactVersion` |
 | Built Info.plist | `plutil -extract MWDAT json` on the Release .app | `{"MetaAppID":"0","AppLinkURLScheme":"vexobridge://","TeamID":"6KRCDGYC5W","ClientToken":"0"}` |
-| Receiver self-check | `cd receiver && .venv/bin/python -m pytest -q` | `1 passed` |
+| Receiver self-check | `cd src/backend && .venv/bin/python -m pytest -q` | `1 passed` |
 | MockDeviceKit end to end, 2.5 min | see below | 62 frames / 153.3 s, median interval 2.52 s, max 2.54 s, 0 gaps > 5 s. 61 WAVs / 150 s, 2.50 s each, 152.5 s audio total. No errors, no recovery events. |
 
 `-allowProvisioningUpdates` registered bundle ID `com.vexohacks.bridge` and a development profile on team `6KRCDGYC5W`.
@@ -25,7 +25,7 @@ ffmpeg -f lavfi -i testsrc2=size=720x1280:rate=30:duration=60 \
   -c:v hevc_videotoolbox -b:v 2M -tag:v hvc1 -pix_fmt yuv420p build/mock_feed_vt.mov
 
 # 2. Receiver
-cd receiver && .venv/bin/python server.py
+cd src/backend && .venv/bin/python server.py
 
 # 3. App, unattended (Debug-only launch args)
 U=<simulator udid>
@@ -36,7 +36,7 @@ xcrun simctl launch --console-pty $U com.vexohacks.bridge \
   -mockFeedPath "$PWD/build/mock_feed_vt.mov"
 
 # 4. Summary
-cd receiver && .venv/bin/python check_run.py
+cd src/backend && .venv/bin/python check_run.py
 ```
 
 Log from that run:
@@ -67,9 +67,9 @@ The mock ignores the 2 fps request: rx climbs at the file's 30 fps. The 2.5 s th
 
 1. Work through the README checklist: Developer Mode ON, Meta AI installed and glasses linked, hotspot.
 2. Laptop on the iPhone hotspot. Get the laptop address: `ipconfig getifaddr en0`.
-3. Receiver: `cd ~/vexo-bridge/receiver && rm -rf data && .venv/bin/python server.py`. Leave this terminal visible.
+3. Receiver: `cd ~/vexohacks/src/backend && rm -rf data && .venv/bin/python server.py`. Leave this terminal visible.
 4. iPhone plugged into the Mac. Developer Mode ON on the iPhone (Settings ▸ Privacy & Security ▸ Developer Mode).
-5. Xcode: open `ios/VexoBridge.xcodeproj`, scheme VexoBridge, choose your iPhone, Run (Debug build, so you get the heartbeat and run log). The first install may need Settings ▸ General ▸ VPN & Device Management ▸ trust the developer.
+5. Xcode: open `src/ios/VexoBridge.xcodeproj`, scheme VexoBridge, choose your iPhone, Run (Debug build, so you get the heartbeat and run log). The first install may need Settings ▸ General ▸ VPN & Device Management ▸ trust the developer.
 
 Logs: the Xcode console shows every `[vexo]` line. The app's on-screen log keeps the last 50.
 
@@ -123,7 +123,7 @@ Failure signatures:
 
 Leave it running for 2+ minutes in the foreground. Watch `HB gen=1 rx=… posted=…` every 15 s: `posted` should climb by about 6 per heartbeat. Then:
 ```bash
-cd ~/vexo-bridge/receiver && .venv/bin/python check_run.py
+cd ~/vexohacks/src/backend && .venv/bin/python check_run.py
 ```
 Pass: frames median about 2.5 s, `gaps >5s: 0` (or a few, explained by a logged event), frame sizes 504x896 or 360x640.
 

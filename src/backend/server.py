@@ -39,6 +39,7 @@ import memory
 import models
 import notes
 import payments
+import voice
 
 DATA_DIR = Path(os.environ.get("SCENE_DATA_DIR", Path(__file__).parent / "data"))
 PORT = int(os.environ.get("PORT", "8001"))
@@ -449,6 +450,22 @@ async def client_log(request: Request):
     with open(DATA_DIR / "glasses.log", "a") as f:   # so it can be read without the server terminal
         f.write(f"{time.strftime('%H:%M:%S')} {request.client.host if request.client else '?'} {body}\n")
     return {"ok": True}
+
+
+@app.get("/settings")
+async def settings_get():
+    """`output` is null until the wearer picks, so the glasses app knows to ask."""
+    return {"output": voice.output_mode(default=None), "modes": list(voice.OUTPUT_MODES)}
+
+
+@app.post("/settings")
+async def settings_set(output: str = Form(...)):
+    try:
+        voice.set_output_mode(output)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    print(f"SETTINGS output = {output}", flush=True)
+    return {"output": output}
 
 
 @app.get("/today")

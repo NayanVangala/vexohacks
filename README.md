@@ -52,6 +52,11 @@ transcript shows "Couldn't verify" and has no Approve button. The glasses reach 
 through the Scene backend (`/ft/*` proxies to `:8002`). Set `FOLLOWTHROUGH_FORWARD_URL` in
 `src/backend/.env` to feed it what the glasses hear.
 
+**Cards or speaking, your choice.** The first time Scene opens on the glasses it asks how it should
+tell you things: **Cards** (everything on the display, the laptop stays quiet), **Speaking** (answers
+out loud and spoken yes/no approvals, fewer cards), or **Both**. Change it any time from the pill in
+the header; it's saved on the server (`GET/POST /settings`) and applies to every device.
+
 **Works with the Meta Neural Band alone.** The band's D-pad gestures move focus and its pinch
 selects, so every action works without voice: approve or dismiss a payment, mark a task done,
 browse Recent, and **ask questions with a pinch** (preset questions built from what Scene has seen,

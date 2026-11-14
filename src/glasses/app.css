@@ -89,3 +89,9 @@ button:focus, .item:focus,
   .list .item:nth-child(4) { animation-delay: .12s; }
   @keyframes rise { from { opacity: 0; transform: translateY(16px); } }
 }
+
+/* Header pill: how Scene talks to you (Cards / Speaking / Both). Focusable like everything else. */
+header .pill { margin-left: 6px; padding: 5px 14px; font-size: 16px; font-weight: 600; letter-spacing: .02em;
+  border-color: var(--line); color: var(--soft); }
+header .pill:focus { color: var(--ink); }
+.title + .list { margin-top: 4px; }

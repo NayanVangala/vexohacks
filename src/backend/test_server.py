@@ -46,3 +46,15 @@ def test_followthrough_proxy_reports_when_down(monkeypatch):
     monkeypatch.setattr(server, "FOLLOWTHROUGH_URL", "http://127.0.0.1:9")
     r = TestClient(server.app).get("/ft/api/state")
     assert r.status_code == 502 and "src/followthrough" in r.json()["detail"]
+
+
+def test_output_mode_setting():
+    c = TestClient(server.app)
+    import voice
+    voice._settings_path().unlink(missing_ok=True)
+    assert c.get("/settings").json()["output"] is None          # not chosen yet: the glasses ask
+    assert voice.speaks()                                       # default until chosen: both
+    assert c.post("/settings", data={"output": "cards"}).json() == {"output": "cards"}
+    assert c.get("/settings").json()["output"] == "cards" and not voice.speaks()
+    assert c.post("/settings", data={"output": "shout"}).status_code == 422
+    c.post("/settings", data={"output": "both"})

@@ -39,7 +39,9 @@ async function poll() {
       state.lastCard = Math.max(...fresh.map(c => c.id));
       state.cards = [...fresh.reverse(), ...state.cards].slice(0, 30);
     }
-    [state.tasks, state.things, state.payments] = await Promise.all([api('/tasks'), api('/items'), api('/payments')]);
+    let settings;
+    [state.tasks, state.things, state.payments, settings] = await Promise.all([api('/tasks'), api('/items'), api('/payments'), api('/settings')]);
+    state.mode = settings.output;   // null until the wearer picks: render() then asks
     state.online = true;
     await Promise.all(pollers.map(p => p().catch(err => report('poller: ' + err.message))));
   } catch { state.online = false; }
@@ -58,7 +60,9 @@ function spotlight() {
   if (ask) return { kind: 'confirm', card: ask };
   const order = state.cards.find(c => c.kind === 'order' && !state.dismissed.has(c.id));
   if (order) return { kind: 'order', card: order };
-  const card = state.cards.find(c => !state.dismissed.has(c.id) && c.kind !== 'payment' && c.kind !== 'offer' && c.kind !== 'confirm' && c.kind !== 'order');
+  // In "speaking" mode answers were already said out loud: don't repeat them as cards.
+  const card = state.cards.find(c => !state.dismissed.has(c.id) && c.kind !== 'payment' && c.kind !== 'offer' && c.kind !== 'confirm' && c.kind !== 'order'
+    && !(state.mode === 'voice' && c.kind === 'answer'));
   return card ? { kind: card.kind, card } : null;
 }
 
@@ -161,9 +165,27 @@ function recent() {
 }
 
 let lastHTML = '';
+/** How Scene talks to you. Asked once (first open), changeable from the header pill. */
+const MODES = [
+  ['cards', 'Cards', 'Answers and approvals appear here. The laptop stays quiet.'],
+  ['voice', 'Speaking', 'Scene answers out loud and asks before acting. Fewer cards.'],
+  ['both', 'Both', 'Cards here, and Scene speaks too.'],
+];
+function mode() {
+  const first = state.mode == null;
+  const items = MODES.map(([id, name, desc]) =>
+    `<button class="item" data-act="set-mode" data-q="${id}">${name}${state.mode === id ? ' · current' : ''}<small>${desc}</small></button>`).join('');
+  return `<div class="eyebrow">${first ? 'Welcome to Scene' : 'How Scene talks to you'}</div>
+    <div class="title">How should Scene tell you things?</div>
+    <div class="list">${items}</div>
+    ${first ? '' : '<div class="row nav"><button data-view="home">Back</button></div>'}`;
+}
+
 function render() {
-  const header = `<header>${STAR}<h1>Scene</h1><span class="status"><span class="dot ${state.online ? '' : 'off'}"></span>${state.online ? 'Live' : 'Offline'}</span></header>`;
-  const body = ({ home, tasks, things, ask, recent, ...views }[state.view] || home)();
+  const label = { cards: 'Cards', voice: 'Speaking', both: 'Cards + voice' }[state.mode] || 'Choose';
+  const header = `<header>${STAR}<h1>Scene</h1><button class="pill" data-view="mode">${label}</button><span class="status"><span class="dot ${state.online ? '' : 'off'}"></span>${state.online ? 'Live' : 'Offline'}</span></header>`;
+  const firstRun = state.online && state.mode == null;
+  const body = firstRun ? mode() : ({ home, tasks, things, ask, recent, mode, ...views }[state.view] || home)();
   const html = header + (state.note ? `<div class="body">${esc(state.note)}</div>` : '') + body;
   if (html === lastHTML) return;   // don't re-render (and steal focus) when nothing changed
   const key = el => (el?.dataset?.act || '') + (el?.dataset?.id || '') + (el?.dataset?.view || '') + (el?.dataset?.q || '');
@@ -182,6 +204,7 @@ $app.addEventListener('click', async e => {
   if (view) { state.view = view; render(); return; }
   try {
     if (actions[act]) await actions[act](el.dataset);
+    if (act === 'set-mode') { await api('/settings', 'POST', { output: q }); state.mode = q; state.view = 'home'; }
     if (act === 'approve') { await api(`/payments/${id}/approve`, 'POST'); state.note = 'Requested. Show the QR on your phone.'; }
     if (act === 'reject') await api(`/payments/${id}/reject`, 'POST');
     if (act === 'done' && id) await api(`/tasks/${id}/done`, 'POST');

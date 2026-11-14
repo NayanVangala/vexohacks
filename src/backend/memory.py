@@ -411,7 +411,7 @@ def forward_to_followthrough(text: str) -> None:
     except Exception as e:
         print(f"memory: Follow-Through forward failed: {e!r}", flush=True)
         return
-    if FT_VOICE:
+    if FT_VOICE and voice.speaks():   # cards-only: approvals stay on the display, nothing is asked aloud
         _ft_enqueue(run.json().get("items", []))
 
 

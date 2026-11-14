@@ -77,8 +77,42 @@ def listening() -> bool:
     return _pending is not None
 
 
+# ---------- how Scene talks to you: "cards", "voice", or "both" (chosen on the glasses) ----------
+OUTPUT_MODES = ("cards", "voice", "both")
+
+
+def _settings_path():
+    from pathlib import Path
+    return Path(os.environ.get("SCENE_DATA_DIR", Path(__file__).parent / "data")) / "settings.json"
+
+
+def output_mode(default: str | None = "both") -> str | None:
+    """The saved choice, or `default` if the wearer hasn't picked one yet."""
+    import json
+    try:
+        m = json.loads(_settings_path().read_text()).get("output")
+        return m if m in OUTPUT_MODES else default
+    except (OSError, ValueError):
+        return default
+
+
+def set_output_mode(mode: str) -> None:
+    import json
+    if mode not in OUTPUT_MODES:
+        raise ValueError(f"output must be one of {OUTPUT_MODES}")
+    p = _settings_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"output": mode}))
+
+
+def speaks() -> bool:
+    return output_mode() in ("voice", "both")
+
+
 def speak(text: str) -> None:
-    """Fire and forget: never blocks the audio lane."""
+    """Fire and forget: never blocks the audio lane. Silent when the wearer chose cards only."""
+    if not speaks():
+        return
     key = os.environ.get("ELEVENLABS_API_KEY", "")
     if key and key != "REPLACE_ME":
         try:

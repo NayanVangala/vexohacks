@@ -54,11 +54,24 @@ def test_approve_sends_one_line_per_item_in_cents_with_idempotency(fake):
     o = orders.propose(PLACE, LINES)
     a = orders.approve(o["id"])
     _, path, kw = calls[0]
-    assert path == "/checkout/sessions" and kw["headers"]["Idempotency-Key"] == f"scene-order-{o['id']}"
+    assert path == "/checkout/sessions" and kw["headers"]["Idempotency-Key"] == f"scene-order-{o['id']}-{int(o['ts'])}"
     d = kw["data"]
     assert d["line_items[0][price_data][unit_amount]"] == 899 and d["line_items[1][quantity]"] == 2
     assert d["line_items[1][price_data][unit_amount]"] == 419 and d["success_url"] == f"https://scene.example/order/{o['id']}"
     assert a["status"] == "approved" and a["url"].startswith("https://checkout.stripe.test")
+
+
+def test_idempotency_key_differs_for_a_reused_order_id(fake, monkeypatch):
+    """Order ids restart at 1 on a fresh database; Stripe remembers keys for 24 h, so the key must not be just the id."""
+    calls, _ = fake
+    o1 = orders.approve(orders.propose(PLACE, LINES)["id"])
+    with memory._db_lock:
+        memory.db().execute("DELETE FROM orders")
+        memory.db().commit()
+    monkeypatch.setattr(orders, "_now", lambda: 2000.0)
+    orders.approve(orders.propose(PLACE, LINES)["id"])
+    keys = [c[2]["headers"]["Idempotency-Key"] for c in calls if c[0] == "POST"]
+    assert len(keys) == 2 and keys[0] != keys[1] and o1["id"] == 1
 
 
 def test_double_approve_makes_one_stripe_session(fake):

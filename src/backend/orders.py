@@ -94,7 +94,7 @@ def approve(order_id: int) -> dict:
         data[f"line_items[{n}][price_data][currency]"] = "usd"
         data[f"line_items[{n}][price_data][unit_amount]"] = it["price_cents"]
         data[f"line_items[{n}][price_data][product_data][name]"] = it["name"]
-    s = payments._stripe("POST", "/checkout/sessions", headers={"Idempotency-Key": f"scene-order-{order_id}"}, data=data)
+    s = payments._stripe("POST", "/checkout/sessions", headers={"Idempotency-Key": f"scene-order-{order_id}-{int(o['ts'])}"}, data=data)
     with memory._db_lock:
         memory.db().execute("UPDATE orders SET status='approved', session_id=?, url=? WHERE id=?",
                             (s["id"], s["url"], order_id))

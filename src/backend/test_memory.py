@@ -161,3 +161,10 @@ def test_followthrough_call_and_response(monkeypatch):
 
     memory._ft_enqueue([{"id": "a1", "status": "pending", "title": "Send Nayan the deck"}])   # asked once only
     assert len([s for s in spoken if s.startswith("Want me")]) == 1
+
+
+def test_whisper_room_noise_is_dropped():
+    for junk in ["Thank you very much.", "Thank you. Bye. Bye.", "😋", "谢谢观看 欢迎订阅我的频道", "시청 해주셔서 감사합니다.", "Thanks."]:
+        assert voice.is_noise(junk), junk
+    for real in ["Hey scene, where did I leave my headphones?", "Where are my headphones?", "Yep, send it by four."]:
+        assert not voice.is_noise(real), real

@@ -19,9 +19,11 @@ WAKE = re.compile(os.environ.get(
     "SCENE_WAKE_REGEX", r"\b(?:hey|hi|ok|okay)[\s,.!]+(?:scene|scenes|seen|sean|shean|sene|scen)\b"), re.I)
 WINDOW_S = float(os.environ.get("SCENE_WAKE_WINDOW_S", "6"))      # keep listening this long for the question
 MIN_QUESTION_CHARS = int(os.environ.get("SCENE_WAKE_MIN_CHARS", "12"))
-COOLDOWN_S = float(os.environ.get("SCENE_WAKE_COOLDOWN_S", "12"))  # glasses mic hears the laptop answer
-ELEVEN_VOICE = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
-ELEVEN_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
+COOLDOWN_S = float(os.environ.get("SCENE_WAKE_COOLDOWN_S", "4"))   # answers play in the glasses now, the mic barely hears them  # glasses mic hears the laptop answer
+# Sarah: mature, reassuring, American. Alternatives on the account: River (SAz9YHcvj6GT2YYXdXww, relaxed,
+# neutral), Eric (cjVigY5qzO86Huf0OWal, smooth). Flash is ElevenLabs' lowest-latency model.
+ELEVEN_VOICE = os.environ.get("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
+ELEVEN_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_flash_v2_5")
 
 # Whisper invents these on silence. ponytail: fixed list; widen it from real logs if more show up.
 HALLUCINATIONS = {"thank you", "thanks for watching", "you", "bye", "thank you for watching", "okay"}
@@ -42,7 +44,13 @@ _cooldown_until = 0.0
 
 def is_noise(text: str) -> bool:
     t = re.sub(r"[^a-z' ]", "", text.lower()).strip()
-    return t.replace("'", "") in HALLUCINATIONS or any(p in t for p in PHANTOM_PHRASES)
+    if not re.search(r"[a-z]{2}", t):          # emoji, CJK subtitles, punctuation: not English speech
+        return True
+    words = t.replace("'", "")
+    # Whisper's favourite inventions on room noise: any mix of thanks/bye/you and nothing else.
+    if set(words.split()) <= {"thank", "thanks", "you", "very", "much", "so", "bye", "okay", "ok"}:
+        return True
+    return words in HALLUCINATIONS or any(p in t for p in PHANTOM_PHRASES)
 
 
 def is_silent(wav: bytes) -> bool:
@@ -153,7 +161,8 @@ from collections import deque as _deque  # noqa: E402
 import itertools as _itertools           # noqa: E402
 
 _utterances: _deque = _deque(maxlen=30)
-_utterance_ids = _itertools.count(1)
+# Ids start from the clock, so a server restart never reuses an id the phone already played.
+_utterance_ids = _itertools.count(int(time.time() * 1000))
 _audio_cache: dict[int, tuple[bytes, str]] = {}
 
 

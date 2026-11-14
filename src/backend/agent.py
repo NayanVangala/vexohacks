@@ -1,4 +1,5 @@
-"""The dining agent: "hey Scene, place an order at McDonald's" runs a real tool-using loop.
+"""Scene's task agent: "hey Scene, place an order at McDonald's", "email Priya about the budget", "put this on my
+calendar", "search up the best GoPros" all run one real tool-using loop.
 
 It finds the nearest place, asks the wearer to confirm it, looks up that place's menu, builds the cart from what
 the wearer says, asks again, and only then proposes an order (a card with Pay). It can never charge anything: Pay
@@ -8,27 +9,34 @@ the total is computed in code by orders.propose.
 The model call is injectable (`step`), so tests script it. Slow lookups run while the wearer is being asked.
 """
 
+import os
 import re
 import threading
 import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import lookup
 import models
+import outbox
 # orders and payments import memory, which imports this module: they are imported inside the functions that use them.
 
 TOOL_BUDGET = 8            # tool calls per user turn before the agent gives up
 IDLE_S = 600.0
 CANCEL = re.compile(r"\b(never mind|nevermind|cancel|forget it|stop)\b", re.I)
 
-SYSTEM = """You are Scene, a voice assistant on someone's smart glasses, helping them order food.
-Work step by step with the tools. Rules:
-- To order: call find_nearby for the restaurant, then ask_user to confirm the nearest place (say its street and distance). If they say no, offer the next one.
-- After they confirm a place, call get_menu for it, then ask_user what they would like (skip this if they already said).
-- Never invent menu items or prices. Only order items that get_menu returned. If they ask for something missing, say so and ask.
-- Before propose_order the wearer must have said what they want. propose_order creates a card they approve; you cannot pay.
-- Questions like "what is high protein" or "healthy options": use get_menu then rank_menu and answer in one short sentence.
-- If find_nearby says there is no location, ask_user where they are, then call find_nearby again with near set to their answer.
-- Every spoken line must be under 20 words, casual, no lists. Do not repeat the menu."""
+def _system() -> str:
+    now = datetime.now(ZoneInfo(os.environ.get("TIMEZONE", "America/Los_Angeles")))
+    return f"""You are Scene, a voice assistant on someone's smart glasses. It is {now.strftime('%A %Y-%m-%d %H:%M')} local time.
+You help with errands using tools: ordering food, emailing, the calendar, and searching the web. Rules:
+- Ordering: find_nearby for the restaurant, then ask_user to confirm the nearest place (say its street and distance). If they say no, offer the next one. After they confirm, get_menu, then ask_user what they would like (skip if they already said). Only order items get_menu returned; never invent items or prices. propose_order creates a card they approve; you cannot pay.
+- Email: send_email drafts it; the wearer taps Send. Write the subject and a 2 to 4 sentence body from them to the person. If you do not know what it should say, ask_user first. Never claim an email was sent: you only drafted it.
+- Calendar: add_calendar_event needs a real day and time (start as YYYY-MM-DDTHH:MM local). If the day or time is missing or vague, ask_user first. Resolve "friday" or "tomorrow" from the date above. It makes a card the wearer approves.
+- Search: web_search for facts, products, news. Then answer in one or two spoken sentences; details are already on their screen.
+- "What is high protein" or "healthy options": get_menu then rank_menu, answer in one sentence.
+- If find_nearby says there is no location, ask_user where they are, then call it again with near set to their answer.
+- Every spoken line is under 20 words, casual, no lists. Do not read out URLs."""
+
 
 TOOLS = [
     {"name": "find_nearby", "description": "Find the 3 nearest places matching a name or type of food.",
@@ -43,6 +51,14 @@ TOOLS = [
     {"name": "propose_order", "description": "Create the order card for the wearer to approve. Items must be on the fetched menu.",
      "parameters": {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
          "name": {"type": "string"}, "qty": {"type": "integer"}}, "required": ["name", "qty"]}}}, "required": ["items"]}},
+    {"name": "send_email", "description": "Draft an email for the wearer to approve and send. It does not send by itself.",
+     "parameters": {"type": "object", "properties": {"to": {"type": "string", "description": "Recipient's name"}, "subject": {"type": "string"},
+                                                     "body": {"type": "string"}}, "required": ["to", "subject", "body"]}},
+    {"name": "add_calendar_event", "description": "Draft a calendar event for the wearer to approve.",
+     "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "start": {"type": "string", "description": "YYYY-MM-DDTHH:MM, local time"},
+                                                     "duration_min": {"type": "integer"}}, "required": ["title", "start"]}},
+    {"name": "web_search", "description": "Search the web and get a short, sourced answer.",
+     "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "rank_menu", "description": "Best items on the fetched menu for a goal.",
      "parameters": {"type": "object", "properties": {"goal": {"type": "string", "enum": ["protein", "healthy"]}}, "required": ["goal"]}},
 ]
@@ -67,7 +83,8 @@ def _usd(c: int) -> str:
 
 
 class Agent:
-    def __init__(self, step=None, say=None, push=None, where=None, sync=False, find=None, menu=None, propose=None):
+    def __init__(self, step=None, say=None, push=None, where=None, sync=False, find=None, menu=None, propose=None,
+                 draft_email=None, draft_event=None, search=None):
         self.step = step or models.agent_step
         self.say = say or (lambda text: None)
         self.push = push or (lambda kind, title, body, ref: None)
@@ -76,6 +93,9 @@ class Agent:
         self.find = find or (lambda q, w: lookup.find_nearby(q, w))
         self.menu = menu or (lambda place, wanted="": lookup.get_menu(place, wanted))
         self.propose = propose or self._propose
+        self.draft_email = draft_email or outbox.draft
+        self.draft_event = draft_event or outbox.draft_event
+        self.search = search or models.search_web
         self._lock = threading.Lock()
         self._reset()
 
@@ -87,7 +107,7 @@ class Agent:
     def _reset(self) -> None:
         self.status, self.question, self.hist = "idle", None, []
         self.places, self.place, self.items, self.calls = [], None, [], 0
-        self.sid, self.last, self._spoke = getattr(self, "sid", 0) + 1, time.time(), False
+        self.sid, self.last, self._spoke, self.utterance = getattr(self, "sid", 0) + 1, time.time(), False, ""
 
     def state(self) -> dict:
         if self.status in ("waiting", "running") and time.time() - self.last > IDLE_S:
@@ -96,6 +116,7 @@ class Agent:
 
     def start(self, utterance: str) -> None:
         self._reset()
+        self.utterance = utterance
         self.hist = [{"role": "user", "parts": [{"text": utterance}]}]
         self.status = "running"
         self._go()
@@ -130,7 +151,7 @@ class Agent:
                     self.status = "done"
                     return
                 try:
-                    out = self.step(SYSTEM, self.hist, TOOLS)
+                    out = self.step(_system(), self.hist, TOOLS)
                 except Exception as e:
                     print(f"agent: model call failed: {e!r}", flush=True)
                     self.say("Sorry, I couldn't reach my brain. Try again?")
@@ -206,6 +227,46 @@ class Agent:
             pool = withp
         top = sorted(pool, key=key)[:5]
         return {"items": [{"name": m["name"], "calories": m["calories"], "protein_g": m["protein_g"]} for m in top]}
+
+    def _t_send_email(self, a: dict) -> dict:
+        subject, body = str(a.get("subject") or "").strip(), str(a.get("body") or "").strip()
+        if not subject or not body:
+            return {"error": "subject and body are required: ask the user what the email should say"}
+        d = self.draft_email(str(a.get("to") or "").strip(), subject, body, self.utterance)
+        self.push("email", f"Email {d['to_name'] or 'them'}?", f"{subject}: {body}", d["id"])
+        self.say("Drafted it. Pinch Send on your glasses when you're ready.")
+        self.status = "done"
+        return {"ok": True}
+
+    def _t_add_calendar_event(self, a: dict) -> dict:
+        title, start = str(a.get("title") or "").strip(), str(a.get("start") or "").strip()
+        try:
+            when = datetime.strptime(start, "%Y-%m-%dT%H:%M")
+        except ValueError:
+            return {"error": "start must be YYYY-MM-DDTHH:MM in local time with a real day and time: ask the user if unsure"}
+        now = datetime.now(ZoneInfo(os.environ.get("TIMEZONE", "America/Los_Angeles"))).replace(tzinfo=None)
+        if when < now.replace(microsecond=0) - timedelta(minutes=5):
+            return {"error": "that time is in the past: ask the user for a future day and time"}
+        if not title:
+            return {"error": "title is required"}
+        mins = a.get("duration_min")
+        d = self.draft_event(title, start, mins if isinstance(mins, int) and mins > 0 else 30, self.utterance)
+        self.push("calendar", "Add to calendar?", f"{title} · {when.strftime('%a %b %-d, %-I:%M %p')}", d["id"])
+        self.say("Got it. Pinch Add on your glasses to put it on your calendar.")
+        self.status = "done"
+        return {"ok": True}
+
+    def _t_web_search(self, a: dict) -> dict:
+        q = str(a.get("query") or "").strip()
+        if not q:
+            return {"error": "query is required"}
+        if not self._spoke:
+            self._spoke = True
+            self.say("On it, searching.")
+        r = self.search(q)
+        names = [s["title"] for s in r.get("sources", [])]
+        self.push("answer", q[:60], r["answer"] + (f"\nSources: {', '.join(names)}" if names else ""), None)
+        return {"answer": r["answer"], "sources": names}
 
     def _t_propose_order(self, a: dict) -> dict:
         if not self.place or not self.items:

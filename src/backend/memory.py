@@ -182,7 +182,9 @@ def clear_cards() -> None:
 
 _loc: tuple[float, float, float] | None = None   # lat, lng, when
 LOC_VALID_S = 1800
-DINING = re.compile(r"\b(order|place an order|hungry|get me|something to eat|high protein|healthy options|calories)\b", re.I)
+# Task requests go to the agent: food, email, calendar, reminders, web search. Everything else is a memory question.
+DINING = re.compile(r"\b(order|place an order|hungry|get me|something to eat|high protein|healthy options|calories"
+                    r"|e-?mail|calendar|schedule|remind|reminder|search|look up|google)\b", re.I)
 MAX_REPLY_WORDS = 20   # a spoken answer to the agent; longer is probably someone else's conversation
 
 

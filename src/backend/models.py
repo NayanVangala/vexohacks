@@ -20,6 +20,8 @@ OPENAI_STT_MODEL = os.environ.get("OPENAI_STT_MODEL", "whisper-1")
 # Grounded (Maps/Search) calls: hydrogen takes ~40 s for these, flash-lite ~3 s but is less grounded. Speed wins
 # live; set GEMINI_GROUNDED_MODEL=gemini-4-hydrogen when accuracy matters more than the wait.
 GEMINI_GROUNDED_MODEL = os.environ.get("GEMINI_GROUNDED_MODEL", "gemini-3.1-flash-lite")
+# Web search needs real grounding (sources); 3.5-flash-lite does it in ~2 s, 3.1-flash-lite returned none.
+GEMINI_SEARCH_MODEL = os.environ.get("GEMINI_SEARCH_MODEL", "gemini-3.5-flash-lite")
 GEMINI_TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL", GEMINI_MODEL)  # used only when OpenAI is absent
 GEMINI_EMBED_MODEL = os.environ.get("GEMINI_EMBED_MODEL", "gemini-embedding-001")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -155,6 +157,23 @@ def grounded(prompt: str, tool: str, latlng: tuple[float, float] | None = None) 
         body["toolConfig"] = {"retrievalConfig": {"latLng": {"latitude": latlng[0], "longitude": latlng[1]}}}
     out = _gemini(f"models/{GEMINI_GROUNDED_MODEL}:generateContent", json=body, timeout=90)
     return "".join(p.get("text", "") for p in out["candidates"][0]["content"]["parts"])
+
+
+def search_web(query: str) -> dict:
+    """Google-grounded answer to a web question: {"answer": str, "sources": [{"title", "url"}]} (up to 4 sources)."""
+    out = _gemini(f"models/{GEMINI_SEARCH_MODEL}:generateContent", timeout=60, json={
+        "contents": [{"parts": [{"text": f"Search the web and answer: {query}\nAt most 3 short plain sentences, specific and current: "
+                                         "name concrete products, prices or facts. No markdown."}]}],
+        "tools": [{"google_search": {}}]})
+    c = out["candidates"][0]
+    answer = "".join(p.get("text", "") for p in c["content"]["parts"]).strip()
+    seen, sources = set(), []
+    for ch in c.get("groundingMetadata", {}).get("groundingChunks", []):
+        w = ch.get("web") or {}
+        if w.get("title") and w["title"] not in seen:
+            seen.add(w["title"])
+            sources.append({"title": w["title"], "url": w.get("uri", "")})
+    return {"answer": answer, "sources": sources[:4]}
 
 
 def agent_step(system: str, history: list[dict], tools: list[dict]) -> dict:

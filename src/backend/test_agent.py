@@ -30,9 +30,29 @@ class Rig:
         self.script, self.said, self.pushed, self.menu_calls, self.proposed, self.steps = list(script), [], [], [], [], []
         self.agent = agent_mod.Agent(
             step=self.step, say=self.said.append, push=lambda *a: self.pushed.append(a), where=lambda: where, sync=True,
-            find=lambda q, w: PLACES, menu=self.menu, propose=self.propose)
+            find=lambda q, w: PLACES, menu=self.menu, propose=self.propose,
+            draft_email=self.draft_email, draft_event=self.draft_event, search=self.search)
+        self.emails, self.events, self.searches = [], [], []
+
+    def draft_email(self, to_name, subject, body, quote):
+        d = {"id": 11, "to_name": to_name, "subject": subject, "body": body, "quote": quote}
+        self.emails.append(d)
+        return d
+
+    def draft_event(self, title, start, mins, quote):
+        if start < "2026-01-01T00:00" or not start[:4].isdigit():
+            raise ValueError("bad start")
+        d = {"id": 12, "title": title, "start": start, "duration_min": mins, "quote": quote}
+        self.events.append(d)
+        return d
+
+    def search(self, query):
+        self.searches.append(query)
+        return {"answer": "The Hero13 Black is the best all-rounder.", "sources": [
+            {"title": "digitalcameraworld.com", "url": "https://x.test/1"}, {"title": "techradar.com", "url": "https://x.test/2"}]}
 
     def step(self, system, history, tools):
+        self.system = system
         self.steps.append(history[-1])
         return self.script.pop(0)
 
@@ -139,3 +159,67 @@ def test_second_start_replaces_session():
     r.agent.start("order")
     r.agent.start("order again")
     assert r.agent.state()["question"] == "Again?"
+
+
+# ---- general assistant tools: email, calendar, web search ----
+
+def test_send_email_makes_a_draft_card_and_ends_the_session():
+    r = Rig([call("send_email", to="Priya", subject="Budget", body="Hi Priya, sending the budget Friday.")])
+    r.agent.start("hey scene email Priya about the budget")
+    assert r.emails == [{"id": 11, "to_name": "Priya", "subject": "Budget", "body": "Hi Priya, sending the budget Friday.",
+                         "quote": "hey scene email Priya about the budget"}]
+    kind, title, body, ref = r.pushed[-1]
+    assert (kind, title, ref) == ("email", "Email Priya?", 11) and "Budget" in body
+    assert r.agent.state()["status"] == "done" and any("send" in s.lower() for s in r.said)
+
+
+def test_send_email_refuses_empty_subject_or_body():
+    r = Rig([call("send_email", to="Priya", subject="", body="hi"), call("ask_user", question="What should it say?")])
+    r.agent.start("email priya")
+    assert r.emails == [] and "subject" in str(r.steps[-1]).lower() and r.agent.state()["status"] == "waiting"
+
+
+def test_calendar_event_card_and_asking_for_a_missing_time_first():
+    r = Rig([call("ask_user", question="What time?"),
+             call("add_calendar_event", title="Dentist", start="2026-11-20T15:00", duration_min=60)])
+    r.agent.start("put the dentist on my calendar friday")
+    assert r.agent.state()["question"] == "What time?" and r.events == []
+    r.agent.reply("3pm")
+    assert r.events[0]["title"] == "Dentist" and r.events[0]["start"] == "2026-11-20T15:00" and r.events[0]["duration_min"] == 60
+    kind, title, body, ref = r.pushed[-1]
+    assert (kind, title, ref) == ("calendar", "Add to calendar?", 12) and "Dentist" in body and "3:00 PM" in body
+
+
+def test_calendar_event_refuses_bad_or_past_times():
+    r = Rig([call("add_calendar_event", title="x", start="friday at 3", duration_min=30),
+             call("add_calendar_event", title="x", start="2020-01-01T10:00", duration_min=30),
+             call("ask_user", question="When exactly?")])
+    r.agent.start("put x on my calendar")
+    assert r.events == [] and "past" in str(r.steps[-1]).lower() and "YYYY-MM-DDTHH:MM" in str(r.steps[-2])
+
+
+def test_web_search_pushes_an_answer_card_with_sources_and_lets_the_model_speak():
+    r = Rig([call("web_search", query="best gopro cameras right now"), text("The Hero13 Black is the best all-rounder.")])
+    r.agent.start("hey scene search up the best go pro cameras online")
+    assert r.searches == ["best gopro cameras right now"]
+    kind, title, body, ref = r.pushed[-1]
+    assert kind == "answer" and "best gopro" in title.lower() and "Hero13" in body and "digitalcameraworld.com" in body
+    assert r.said[-1] == "The Hero13 Black is the best all-rounder." and r.agent.state()["status"] == "done"
+
+
+def test_web_search_failure_is_reported_to_the_model_not_raised():
+    r = Rig([call("web_search", query="x"), text("I couldn't search just now.")])
+    r.search = lambda q: (_ for _ in ()).throw(RuntimeError("down"))
+    r.agent.search = r.search
+    r.agent.start("search x")
+    assert "failed" in str(r.steps[-1]).lower() and r.agent.state()["status"] == "done"
+
+
+def test_system_prompt_has_todays_date_and_lists_every_tool():
+    r = Rig([text("ok")])
+    r.agent.start("hi")
+    import datetime
+    assert datetime.date.today().isoformat() in r.system
+    names = {t["name"] for t in agent_mod.TOOLS}
+    assert {"find_nearby", "get_menu", "ask_user", "propose_order", "rank_menu", "send_email",
+            "add_calendar_event", "web_search"} <= names

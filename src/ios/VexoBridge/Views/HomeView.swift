@@ -91,6 +91,7 @@ private struct TodayView: View {
                 }
                 .padding(.top, 6)
                 NotesSection(store: store)
+                OrdersSection(store: store)
                 ActivitySection(store: store)
             }
             .padding(.horizontal, 16)
@@ -107,7 +108,6 @@ private struct TodayView: View {
             Button(action: replayIntro) {
                 ZStack {
                     Circle().fill(Theme.action)
-                    StarGlow().scaleEffect(0.6)
                     Star3D(color: Theme.star, depth: 0.28).padding(2).allowsHitTesting(false)
                 }
                 .frame(width: 50, height: 50)
@@ -610,14 +610,22 @@ private struct IntroView: View {
     @State private var lit = 0
     @State private var picked: Int?          // a word the wearer tapped: shows its line, stops the auto-cycle
     @State private var bloom = false
-    @State private var drag: CGSize = .zero
-    @State private var frames: [Int: CGRect] = [:]
 
     private var focus: Int { picked ?? lit }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             Theme.action.ignoresSafeArea()
+
+            // The big star blooms in behind the words and sways in place. Not touchable,
+            // so it never steals a tap from the words or Get started.
+            Star3D(color: Theme.star, depth: 0.16)
+                .frame(width: 560, height: 560)
+                .scaleEffect(bloom ? 1 : 0.25)
+                .rotationEffect(.degrees(bloom ? 0 : -45))
+                .position(x: 150, y: 470)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: -4) {
                 ForEach(Array(words.enumerated()), id: \.offset) { i, w in
@@ -627,9 +635,6 @@ private struct IntroView: View {
                             .tracking(-1.5)
                             .foregroundStyle(Theme.ink.opacity(i == focus ? 1 : 0.22))
                             .scaleEffect(i == focus ? 1.04 : 1, anchor: .leading)
-                            .background(GeometryReader { g in
-                                Color.clear.preference(key: WordFrames.self, value: [i: g.frame(in: .named("intro"))])
-                            })
                         if picked == i {
                             Text(w.what)
                                 .font(.callout.weight(.medium))
@@ -650,26 +655,10 @@ private struct IntroView: View {
             }
             .padding(.horizontal, 22)
             .padding(.top, 30)
-            .padding(.trailing, 110)
-
-            // The star rides beside whichever word is in focus. Drag it anywhere; it springs home. Tap to spin.
-            if let f = frames[focus] {
-                Star3D(color: Theme.star, depth: 0.2)
-                    .frame(width: 150, height: 150)
-                    .scaleEffect(bloom ? 1 : 0.2)
-                    .position(x: min(f.maxX + 70, UIScreen.main.bounds.width - 70), y: f.midY)
-                    .offset(drag)
-                    .gesture(DragGesture()
-                        .onChanged { drag = $0.translation }
-                        .onEnded { _ in withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) { drag = .zero } })
-                    .animation(.spring(response: 0.55, dampingFraction: 0.75), value: focus)
-                    .animation(.spring(response: 0.55, dampingFraction: 0.75), value: frames[focus])
-                    .accessibilityHidden(true)
-            }
 
             VStack {
                 Spacer()
-                Text(picked == nil ? "Tap a word to see what Scene does with it" : "Drag the star. Tap it to spin.")
+                Text("Tap a word to see what Scene does with it")
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Theme.ink.opacity(0.6))
                     .frame(maxWidth: .infinity)
@@ -688,23 +677,14 @@ private struct IntroView: View {
                 .padding(.horizontal, 22).padding(.bottom, 22).padding(.top, 8)
             }
         }
-        .coordinateSpace(.named("intro"))
-        .onPreferenceChange(WordFrames.self) { frames = $0 }
         .task {
-            withAnimation(.spring(response: 1.2, dampingFraction: 0.7)) { bloom = true }
+            withAnimation(.spring(response: 1.4, dampingFraction: 0.75)) { bloom = true }
             for i in words.indices {
                 try? await Task.sleep(for: .milliseconds(230))
                 guard picked == nil else { break }        // the wearer took over
                 withAnimation(.easeOut(duration: 0.2)) { lit = i }
             }
         }
-    }
-}
-
-private struct WordFrames: PreferenceKey {
-    static let defaultValue: [Int: CGRect] = [:]
-    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
-        value.merge(nextValue()) { $1 }
     }
 }
 

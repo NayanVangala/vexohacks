@@ -233,6 +233,9 @@ final class WearablesManager {
     /// own `session.stop()` emits `.stopped` and auto-recovery would immediately
     /// rebuild the session the user just asked us to shut down.
     private var isTearingDown = false
+    /// True while start() runs its own retry loop. A `.stopped` from one of its own failed sessions must not
+    /// launch auto-recovery: two builders at once collide on "A session already exists for this device".
+    private var isStartingUp = false
 
     /// Session auto-recovery. Measured 2026-07-31: the device ends a working
     /// session on its own ("Session ended by device") after anywhere from 37 s to
@@ -373,6 +376,8 @@ final class WearablesManager {
         guard !isStarted else { return }
         guard sdk != nil else { return }
         isStarted = true
+        isStartingUp = true
+        defer { isStartingUp = false }
         isTearingDown = false
         recoveryAttempt = 0
         streamGeneration = 0
@@ -985,6 +990,7 @@ final class WearablesManager {
     /// Called for every `.stopped`. Filters out the ones we caused ourselves.
     private func handleUnexpectedSessionStop() {
         guard isStarted, !isTearingDown else { return }   // user pressed Stop
+        guard !isStartingUp else { return }               // start()'s own retry loop owns this
         guard recoveryTask == nil else { return }         // already recovering
         BridgeState.log("!! session ended by device — auto-recovery starting")
         recoveryTask = Task { [weak self] in await self?.runRecovery() }

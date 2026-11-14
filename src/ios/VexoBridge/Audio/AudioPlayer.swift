@@ -58,17 +58,17 @@ final class AudioPlayer: NSObject {
         if player == nil { playNext() }
     }
 
-    /// C6 then G6 with a fast decay, rendered once as 16-bit mono WAV. No asset to ship.
+    /// E5 then A5, quiet and round (low pitch, slow attack, short tail), rendered once as 16-bit mono WAV.
     private static let chimeWAV: Data = {
-        let sr = 44_100.0, total = 0.45
-        let notes: [(freq: Double, start: Double, dur: Double)] = [(1046.5, 0, 0.18), (1568.0, 0.1, 0.32)]
+        let sr = 44_100.0, total = 0.38
+        let notes: [(freq: Double, start: Double, dur: Double)] = [(659.3, 0, 0.16), (880.0, 0.09, 0.28)]
         var samples = [Double](repeating: 0, count: Int(total * sr))
         for note in notes {
             let s0 = Int(note.start * sr)
             for i in 0..<Int(note.dur * sr) where s0 + i < samples.count {
                 let t = Double(i) / sr
-                let envelope = min(1, t * 300) * exp(-t * 11)          // soft attack, bell-like decay
-                samples[s0 + i] += sin(2 * .pi * note.freq * t) * envelope * 0.32
+                let envelope = min(1, t * 55) * exp(-t * 15)           // ~18 ms swell in, quick fade: no click, no ring
+                samples[s0 + i] += sin(2 * .pi * note.freq * t) * envelope * 0.13
             }
         }
         var pcm = Data(capacity: samples.count * 2)

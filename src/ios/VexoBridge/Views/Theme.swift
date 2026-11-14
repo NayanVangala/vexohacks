@@ -93,20 +93,50 @@ struct StackCard<Content: View>: View {
     }
 }
 
-/// Four-pointed sparkle, the app's motif. Concave sides via quad curves.
+/// The app icon's star, the app's motif: four long needle rays plus four short diagonal ones.
+/// No glow, no hot core: those belong to the icon only.
 struct FourPointStar: Shape {
-    var pinch: CGFloat = 0.18   // 0 = needle-thin points, 0.5 = diamond
-    func path(in r: CGRect) -> Path {
+    func path(in r: CGRect) -> Path { LogoStar.long(in: r).union(LogoStar.short(in: r)) }
+}
+
+enum LogoStar {
+    /// Proportions from scripts/render-icon.swift: long rays r, pinch 0.14.
+    static func long(in r: CGRect) -> Path { rays(in: r, scale: 1, pinch: 0.14, turn: 0) }
+
+    /// The four diagonal rays, floating free: thin needles between the long arms that never touch the star.
+    static func short(in r: CGRect) -> Path {
         let c = CGPoint(x: r.midX, y: r.midY)
-        let pts = [CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
-                   CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)]
-        let k = pinch
+        let rx = r.width / 2, ry = r.height / 2
+        var p = Path()
+        for i in 0..<4 {
+            let a = CGFloat(i) * .pi / 2 + .pi / 4
+            let dx = cos(a), dy = sin(a)
+            func at(_ d: CGFloat, _ side: CGFloat) -> CGPoint {   // d along the ray, side across it
+                CGPoint(x: c.x + (dx * d - dy * side) * rx, y: c.y + (dy * d + dx * side) * ry)
+            }
+            let inner = at(0.36, 0), outer = at(0.66, 0), w: CGFloat = 0.05
+            p.move(to: inner)
+            p.addQuadCurve(to: outer, control: at(0.48, w))
+            p.addQuadCurve(to: inner, control: at(0.48, -w))
+            p.closeSubpath()
+        }
+        return p
+    }
+
+    private static func rays(in r: CGRect, scale: CGFloat, pinch k: CGFloat, turn: CGFloat) -> Path {
+        let c = CGPoint(x: r.midX, y: r.midY)
+        let rx = r.width / 2 * scale, ry = r.height / 2 * scale
+        let pts = (0..<4).map { i -> CGPoint in
+            let a = turn + CGFloat(i) * .pi / 2 - .pi / 2
+            return CGPoint(x: c.x + cos(a) * rx, y: c.y + sin(a) * ry)
+        }
         var p = Path()
         p.move(to: pts[0])
         for i in 0..<4 {
             let a = pts[i], b = pts[(i + 1) % 4]
-            let ctrl = CGPoint(x: c.x + ((a.x + b.x) / 2 - c.x) * k * 2, y: c.y + ((a.y + b.y) / 2 - c.y) * k * 2)
-            p.addQuadCurve(to: b, control: ctrl)
+            p.addCurve(to: b,
+                       control1: CGPoint(x: c.x + (a.x - c.x) * k, y: c.y + (a.y - c.y) * k),
+                       control2: CGPoint(x: c.x + (b.x - c.x) * k, y: c.y + (b.y - c.y) * k))
         }
         p.closeSubpath()
         return p
@@ -197,25 +227,8 @@ struct NoticeBanner: View {
     }
 }
 
-/// The app icon's sparkle: needle-thin rays (cubic sides that hug the axes).
-struct Sparkle: Shape {
-    var pinch: CGFloat = 0.14
-    func path(in r: CGRect) -> Path {
-        let c = CGPoint(x: r.midX, y: r.midY)
-        let pts = [CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
-                   CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)]
-        var p = Path()
-        p.move(to: pts[0])
-        for i in 0..<4 {
-            let a = pts[i], b = pts[(i + 1) % 4]
-            p.addCurve(to: b,
-                       control1: CGPoint(x: c.x + (a.x - c.x) * pinch, y: c.y + (a.y - c.y) * pinch),
-                       control2: CGPoint(x: c.x + (b.x - c.x) * pinch, y: c.y + (b.y - c.y) * pinch))
-        }
-        p.closeSubpath()
-        return p
-    }
-}
+/// Same logo star, for the small twinkles.
+typealias Sparkle = FourPointStar
 
 /// Small sparkles that twinkle in turn around a hero star. Still when Reduce Motion is on.
 struct Twinkles: View {
@@ -256,15 +269,5 @@ private struct Twinkle: ViewModifier {
                 on ? .easeOut(duration: 0.5).delay(delay) : .easeIn(duration: 0.7).delay(0.8)
             }
         }
-    }
-}
-
-/// Warm light behind a star.
-struct StarGlow: View {
-    var color: Color = Theme.star
-    var body: some View {
-        Circle().fill(RadialGradient(colors: [color.opacity(0.75), color.opacity(0)], center: .center,
-                                     startRadius: 0, endRadius: 60))
-            .allowsHitTesting(false)
     }
 }

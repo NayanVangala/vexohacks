@@ -28,6 +28,7 @@ import agent as agent_mod
 import contacts
 import httpx
 import outbox
+import lead
 import models
 import notes
 import payments
@@ -51,13 +52,15 @@ _conn: sqlite3.Connection | None = None
 # Frame lane is small on purpose: if Gemini falls behind, drop frames rather than answer about the past.
 # "extract" holds the slow transcript work (task extraction, Follow-Through's GPT-4o run, often
 # 5-15 s) so it never sits in front of a "hey scene" question on the audio lane.
-_lanes = {"frame": queue.Queue(maxsize=3), "audio": queue.Queue(maxsize=50), "extract": queue.Queue(maxsize=20)}
+_lanes = {"frame": queue.Queue(maxsize=3), "audio": queue.Queue(maxsize=50), "extract": queue.Queue(maxsize=20),
+          "lead": queue.Queue(maxsize=2)}
 _workers: dict[str, threading.Thread] = {}
 _last_frame = 0.0
 _last_extract = time.time()
 _transcript: list[str] = []
 awareness = Awareness()
 STOP_NOTES = re.compile(r"\b(stop|end|finish)\s+(the\s+)?notes\b", re.I)
+LEAD_MAX_AGE_MIN = float(os.environ.get("SCENE_LEAD_MAX_AGE_MIN", "180"))  # older sightings: say where, don't offer to walk
 MAX_ANSWER_WORDS = 6   # a spoken yes/no to an offer is short; a long sentence in a meeting is not an answer
 
 
@@ -152,6 +155,8 @@ def _run(q: queue.Queue) -> None:
 def on_frame(path: Path) -> None:
     global _last_frame
     now = time.time()
+    if ENABLED and not voice.paused() and lead.due(now):
+        submit("lead", _lead_step, path)      # its own lane: never waits behind a slow see()
     if not ENABLED or now - _last_frame < FRAME_EVERY_S or voice.paused():
         return
     _last_frame = now
@@ -291,6 +296,8 @@ def process_audio(path: Path) -> None:
     text = models.transcribe(wav)
     if not text or voice.is_noise(text):
         return
+    if _lead_audio(text):
+        return
     pending = awareness.pending(time.time())
     if pending and len(text.split()) <= MAX_ANSWER_WORDS and parse_yes_no(text) != "unclear":
         answer_offer(pending.id, parse_yes_no(text) == "yes")
@@ -311,9 +318,12 @@ def process_audio(path: Path) -> None:
         return
     if question:  # a question to Scene is not a task someone gave you: keep it out of the transcript
         out = ask(question)
-        push_card("answer", question, out["answer"], ref=out["memory_id"], frame=out["frame"])
-        voice.speak(out["answer"])
-        print(f"memory: VOICE {question!r} -> {out['answer']!r}", flush=True)
+        said = out["answer"] + (" Want me to lead you there?" if _can_lead(out) else "")
+        push_card("answer", question, said, ref=out["memory_id"], frame=out["frame"])
+        voice.speak(said)
+        if _can_lead(out):
+            lead.offer(out["target"], said)
+        print(f"memory: VOICE {question!r} -> {said!r}", flush=True)
         return
     if voice.listening():  # "hey scene" heard, question still coming: not part of any conversation
         return
@@ -321,6 +331,48 @@ def process_audio(path: Path) -> None:
     _transcript.append(text)
     if time.time() - _last_extract >= EXTRACT_EVERY_S and _transcript:
         flush_transcript(background=True)
+
+
+# ---------- lead me there (see lead.py) ----------
+
+def _can_lead(out: dict) -> bool:
+    """Offer only for a thing seen recently enough to still be there, with a photo to compare against."""
+    t = out.get("target")
+    return bool(t and t.get("frame") and t.get("age_min", 9999) <= LEAD_MAX_AGE_MIN)
+
+
+def _lead_audio(text: str) -> bool:
+    """True if this chunk was part of the lead flow (a yes/no, a stop, or Scene's own voice) and ends here."""
+    if lead.wants_stop(text):
+        lead.stop()
+        push_card("answer", "Stopped", "Okay, no more directions.")
+        voice.speak("Okay.")
+        return True
+    r = lead.try_answer(text)
+    if r == "start":
+        t = lead.get_target()
+        push_card("answer", f"Leading you to {t['name']}", "Walk slowly. I'll tell you which way to turn.", frame=t.get("frame"))
+        voice.speak("Okay. Walk slowly and I'll tell you which way to turn.")
+        return True
+    if r == "declined":
+        voice.speak("Okay.")
+        return True
+    if r == "ignore":
+        return True
+    # while leading, only "hey scene" talk and "stop" matter; our own spoken steps must not become promises
+    return lead.active() and not voice.WAKE.search(text) and not voice.listening()
+
+
+def _lead_step(path: Path) -> None:
+    def say(text: str, arrived: bool) -> None:
+        t = lead.get_target() or {}
+        if arrived:
+            push_card("answer", f"Found: {t.get('name', 'it')}", text, frame=t.get("frame"))
+        elif not voice.speaks():
+            push_card("answer", f"Leading you to {t.get('name', 'it')}", text)
+        voice.speak(text)
+        print(f"memory: LEAD {text!r}", flush=True)
+    lead.step(path, say)
 
 
 # ---------- scene awareness: offers and notes (see docs/superpowers/specs/2026-11-14-scene-awareness-design.md) ----------
@@ -579,8 +631,13 @@ def ask(question: str) -> dict:
              "status": r["status"], "age_min": round((now - r["ts"]) / 60)} for _, r in hits]
     out = models.answer(question, mems)
     best = next((r for _, r in hits if r["id"] == out.get("memory_id")), None)
+    target = None
+    if best and best["kind"] == "object" and best["frame"]:
+        target = {"name": best["text"], "place": best["place"] or "", "frame": best["frame"],
+                  "frame_path": str(DATA_DIR / "frames" / best["frame"]),
+                  "age_min": round((now - best["ts"]) / 60)}
     return {"question": question, "answer": out.get("answer", ""),
-            "memory_id": best and best["id"], "frame": best and best["frame"]}
+            "memory_id": best and best["id"], "frame": best and best["frame"], "target": target}
 
 
 def open_tasks(limit: int = 6) -> list[dict]:

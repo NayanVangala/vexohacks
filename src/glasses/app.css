@@ -54,7 +54,7 @@ header .gear:focus { color: var(--butter); filter: drop-shadow(0 0 6px rgba(247,
 .big { font-size: 104px; font-weight: 600; letter-spacing: -.045em; line-height: .95; font-variant-numeric: tabular-nums;
   text-shadow: 0 0 28px color-mix(in srgb, var(--c) 45%, transparent); }
 .body { font-size: 21px; color: var(--dim); }
-.quote { font-size: 21px; font-style: italic; color: var(--dim); padding-left: 14px; border-left: 3px solid var(--c); }
+.quote { font-size: 21px; font-style: italic; color: var(--dim); }
 .hint { font-size: 17px; color: var(--faint); text-align: center; }
 .empty { color: var(--dim); font-size: 22px; padding: 8px 0 0 34px; }
 

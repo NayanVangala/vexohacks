@@ -92,9 +92,9 @@ struct GlassesView: View {
         case .unavailable?:
             return ("Meta AI needed", "Install Meta AI and turn on Developer Mode for these glasses.")
         case .available?:
-            return ("Not connected", "Connect once, then approve Vexo in the Meta AI app.")
+            return ("Not connected", "Connect once, then approve Scene in the Meta AI app.")
         case .registering?:
-            return ("Waiting for Meta AI", "Approve Vexo in the Meta AI app, then come back.")
+            return ("Waiting for Meta AI", "Approve Scene in the Meta AI app, then come back.")
         default:
             break
         }
@@ -201,7 +201,7 @@ struct GlassesView: View {
                     Task {
                         let ok = await controller.findLaptop()
                         url = controller.backend.baseURL
-                        if !ok { store.notice = "No laptop found on this network. Start Vexo on the laptop, or type its address." }
+                        if !ok { store.notice = "No laptop found on this network. Start Scene on the laptop, or type its address." }
                         finding = false
                     }
                 } label: {

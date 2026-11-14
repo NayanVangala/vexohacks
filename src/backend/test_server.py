@@ -7,7 +7,7 @@ import os
 import struct
 import tempfile
 
-os.environ.setdefault("VEXO_DATA_DIR", tempfile.mkdtemp())
+os.environ.setdefault("SCENE_DATA_DIR", tempfile.mkdtemp())
 
 from fastapi.testclient import TestClient  # noqa: E402
 

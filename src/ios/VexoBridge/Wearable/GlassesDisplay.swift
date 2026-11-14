@@ -90,8 +90,8 @@ final class GlassesDisplay {
         let open = store?.tasks.count ?? 0
         return panel {
             Icon(name: .metaAi)
-            Text("Vexo is remembering", style: .heading)
-            Text(open == 0 ? "Say \u{201C}hey vexo\u{201D} to ask" : "\(open) open task\(open == 1 ? "" : "s") · say \u{201C}hey vexo\u{201D}",
+            Text("Scene is remembering", style: .heading)
+            Text(open == 0 ? "Say \u{201C}hey scene\u{201D} to ask" : "\(open) open task\(open == 1 ? "" : "s") · say \u{201C}hey scene\u{201D}",
                  style: .body, color: .secondary)
         }
     }

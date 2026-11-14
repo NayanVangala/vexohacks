@@ -11,7 +11,7 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-os.environ.setdefault("VEXO_DATA_DIR", tempfile.mkdtemp())
+os.environ.setdefault("SCENE_DATA_DIR", tempfile.mkdtemp())
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -87,7 +87,7 @@ def test_wake_word_answers_aloud(monkeypatch):
     monkeypatch.setattr(voice, "_cooldown_until", 0.0)
     monkeypatch.setattr(memory, "ask", lambda q: {"question": q, "answer": "On the kitchen counter.",
                                                   "memory_id": 1, "frame": "123.jpg"})
-    said = iter(["Hey Vexo,", "where did I leave my keys?", "Thank you."])
+    said = iter(["Hey Scene,", "where did I leave my keys?", "Thank you."])
     monkeypatch.setattr(models, "transcribe", lambda wav: next(said))
     before = len(memory._transcript)
     last_card = max([c["id"] for c in memory.cards_after(0)] or [0])
@@ -104,6 +104,6 @@ def test_wake_word_answers_aloud(monkeypatch):
 
 
 def test_wake_regex_variants():
-    for s in ["hey vexo what's on my list", "Hey, Vexa. what did Sam ask", "ok vexxo where's my wallet"]:
+    for s in ["hey scene what's on my list", "Hey, Seen. what did Sam ask", "ok sean where's my wallet"]:
         assert voice.WAKE.search(s), s
-    assert not voice.WAKE.search("the vortex of hey")
+    assert not voice.WAKE.search("I have seen hey there")

@@ -1,4 +1,4 @@
-// Renders the Vexo app icon: a glowing four-point sparkle (long rays, short
+// Renders the Scene app icon: a glowing four-point sparkle (long rays, short
 // diagonal rays, bright core) in butter on coral. Colors match Theme.swift.
 // Usage (from repo root): swiftc -O scripts/render-icon.swift -o /tmp/render-icon && /tmp/render-icon src/ios/VexoBridge/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 import AppKit

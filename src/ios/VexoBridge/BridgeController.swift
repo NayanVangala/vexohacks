@@ -189,7 +189,7 @@ final class BridgeController {
                 BridgeState.log("found receiver via Bonjour at \(found)")
                 if (try? await backend.getStats()) != nil { return }
             }
-            BridgeState.log("if this persists: Settings ▸ Privacy & Security ▸ Local Network ▸ Vexo Bridge")
+            BridgeState.log("if this persists: Settings ▸ Privacy & Security ▸ Local Network ▸ Scene")
         }
     }
 

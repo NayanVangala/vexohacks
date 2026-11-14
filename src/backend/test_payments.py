@@ -8,7 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 
-os.environ.setdefault("VEXO_DATA_DIR", tempfile.mkdtemp())
+os.environ.setdefault("SCENE_DATA_DIR", tempfile.mkdtemp())
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -36,7 +36,7 @@ def test_receipt_to_paid(monkeypatch):
     def fake_stripe(method, path, **kw):
         calls.append((method, path, kw))
         if method == "POST":
-            assert kw["headers"]["Idempotency-Key"].startswith("vexo-pay-")
+            assert kw["headers"]["Idempotency-Key"].startswith("scene-pay-")
             assert kw["data"]["line_items[0][price_data][unit_amount]"] == 1200
             return {"id": "cs_test_1", "url": "https://checkout.stripe.com/c/pay/cs_test_1"}
         return {"payment_status": "paid"}

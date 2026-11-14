@@ -71,7 +71,7 @@ The mock ignores the 2 fps request: rx climbs at the file's 30 fps. The 2.5 s th
 4. iPhone plugged into the Mac. Developer Mode ON on the iPhone (Settings ▸ Privacy & Security ▸ Developer Mode).
 5. Xcode: open `src/ios/VexoBridge.xcodeproj`, scheme VexoBridge, choose your iPhone, Run (Debug build, so you get the heartbeat and run log). The first install may need Settings ▸ General ▸ VPN & Device Management ▸ trust the developer.
 
-Logs: the Xcode console shows every `[vexo]` line. The app's on-screen log keeps the last 50.
+Logs: the Xcode console shows every `[scene]` line. The app's on-screen log keeps the last 50.
 
 ### 1. Launch and backend
 
@@ -79,11 +79,11 @@ In the app, set Backend to `http://<laptop-ip>:8001` (or keep the `.local` defau
 
 Expect: `backend reachable at http://…:8001`, and a `GET /stats` in the receiver terminal.
 
-If instead you see `backend unreachable` → Settings ▸ Privacy & Security ▸ Local Network ▸ Vexo Bridge ON, check the IP, check the hotspot.
+If instead you see `backend unreachable` → Settings ▸ Privacy & Security ▸ Local Network ▸ Scene ON, check the IP, check the hotspot.
 
 ### 2. Registration and camera permission
 
-Expect `registration: available — tap Connect…`, then tap **Connect glasses**. Meta AI opens; approve Vexo Bridge. Back in the app:
+Expect `registration: available — tap Connect…`, then tap **Connect glasses**. Meta AI opens; approve Scene. Back in the app:
 ```
 handled callback URL
 registration: registered

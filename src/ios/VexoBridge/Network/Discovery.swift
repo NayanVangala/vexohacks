@@ -3,7 +3,7 @@
 //  VexoBridge
 //
 //  Finds the laptop receiver without typing an IP. receiver/run.sh advertises
-//  `_vexo._tcp` over Bonjour (macOS dns-sd); this browses for it and resolves
+//  `_scene._tcp` over Bonjour (macOS dns-sd); this browses for it and resolves
 //  the first hit to an IPv4 URL. Used only when the saved URL doesn't answer,
 //  so a hand-typed address always wins while it works.
 //
@@ -13,7 +13,7 @@ import Network
 
 enum Discovery {
 
-    static let serviceType = "_vexo._tcp"
+    static let serviceType = "_scene._tcp"
 
     /// Resolves to e.g. "http://172.17.29.149:8001", or nil after `timeout`.
     static func findReceiver(timeout: Duration = .seconds(6)) async -> String? {

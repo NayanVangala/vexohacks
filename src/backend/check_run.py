@@ -11,7 +11,7 @@ import struct
 import time
 from pathlib import Path
 
-DATA = Path(os.environ.get("VEXO_DATA_DIR", Path(__file__).parent / "data"))
+DATA = Path(os.environ.get("SCENE_DATA_DIR", Path(__file__).parent / "data"))
 
 
 def jpeg_size(b: bytes):

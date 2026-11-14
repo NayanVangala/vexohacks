@@ -125,10 +125,10 @@ final class BridgeState {
         // nothing. DEBUG-only — a diagnostic surface, not release behaviour.
         #if DEBUG
         if let handle = Self.runLog,
-           let bytes = ("[vexo] " + line + "\n").data(using: .utf8) {
+           let bytes = ("[scene] " + line + "\n").data(using: .utf8) {
             try? handle.write(contentsOf: bytes)
         }
-        print("[vexo] \(line)")
+        print("[scene] \(line)")
         // Mandatory, not tidiness. stdout is a PIPE under
         // `devicectl --console`, not a TTY, so it is block-buffered: lines sit in
         // a 4 KB buffer and reach the reader only when the buffer fills or the

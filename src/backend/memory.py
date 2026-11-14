@@ -1,7 +1,7 @@
 """Glasses memory: objects, tasks, events in one sqlite table, searched by embedding.
 
 Frames -> models.see (Gemini 4 Hydrogen, every frame) -> object rows + event rows + receipts.
-Audio  -> models.transcribe -> "hey vexo ..." questions are answered aloud (voice.py);
+Audio  -> models.transcribe -> "hey scene ..." questions are answered aloud (voice.py);
           everything else joins a rolling transcript -> models.extract_tasks every ~30 s
           -> tasks / done / money owed, each kept ONLY if its quote is really in the transcript.
 Ask    -> embed question -> cosine top-k, drop weak hits -> models.answer.
@@ -27,11 +27,11 @@ import models
 import payments
 import voice
 
-DATA_DIR = Path(os.environ.get("VEXO_DATA_DIR", Path(__file__).parent / "data"))
+DATA_DIR = Path(os.environ.get("SCENE_DATA_DIR", Path(__file__).parent / "data"))
 ENABLED = bool(os.environ.get("GEMINI_API_KEY"))  # OpenAI optional: models.py falls back to Gemini
 
-FRAME_EVERY_S = float(os.environ.get("VEXO_FRAME_EVERY_S", "0"))  # 0 = every frame (Hydrogen is fast)
-MIN_SIM = float(os.environ.get("VEXO_MIN_SIM", "0.25"))  # weaker hits never reach the answer model (lesson:
+FRAME_EVERY_S = float(os.environ.get("SCENE_FRAME_EVERY_S", "0"))  # 0 = every frame (Hydrogen is fast)
+MIN_SIM = float(os.environ.get("SCENE_MIN_SIM", "0.25"))  # weaker hits never reach the answer model (lesson:
                                                          # an unrelated memory is worse than none). Tune live.
 EXTRACT_EVERY_S = 30.0   # how much transcript to batch before pulling tasks out
 DONE_MATCH = 0.5         # cosine needed for "I sent the deck" to close "Send the deck". Tune live.
@@ -197,13 +197,13 @@ def process_audio(path: Path) -> None:
     if not text or voice.is_noise(text):
         return
     question = voice.heard(text)
-    if question:  # a question to Vexo is not a task someone gave you: keep it out of the transcript
+    if question:  # a question to Scene is not a task someone gave you: keep it out of the transcript
         out = ask(question)
         push_card("answer", question, out["answer"], ref=out["memory_id"], frame=out["frame"])
         voice.speak(out["answer"])
         print(f"memory: VOICE {question!r} -> {out['answer']!r}", flush=True)
         return
-    if voice.listening():  # "hey vexo" heard, question still coming: not part of any conversation
+    if voice.listening():  # "hey scene" heard, question still coming: not part of any conversation
         return
     _transcript.append(text)
     if time.time() - _last_extract >= EXTRACT_EVERY_S and _transcript:
@@ -280,7 +280,7 @@ def items(limit: int = 6) -> list[dict]:
 
 
 def today() -> dict:
-    """Home-screen numbers: what Vexo took in today, by hour (laptop's local time)."""
+    """Home-screen numbers: what Scene took in today, by hour (laptop's local time)."""
     lt = time.localtime()
     midnight = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
     ts = [r["ts"] for r in rows("SELECT ts FROM memories WHERE ts >= ?", midnight)]

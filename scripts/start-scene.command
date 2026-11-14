@@ -1,5 +1,5 @@
 #!/bin/sh
-# Double-click in Finder to start Vexo. Safe to run again: it replaces a running copy.
+# Double-click in Finder to start Scene. Safe to run again: it replaces a running copy.
 cd "$(dirname "$0")/../src/backend" || exit 1
 
 # Free the port from a previous run (Terminal closed without Ctrl+C, etc.).
@@ -15,7 +15,7 @@ fi
 
 IP=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
 echo
-echo "  Vexo is starting. Open the Vexo app on the iPhone: it finds this Mac by itself."
+echo "  Scene is starting. Open the Scene app on the iPhone: it finds this Mac by itself."
 echo "  If it doesn't, type this in the app's Glasses tab:  http://$IP:8001"
 echo
 exec ./run.sh

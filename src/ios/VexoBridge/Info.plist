@@ -71,12 +71,12 @@
 	     more important reason: every POST to the laptop is local-network
 	     traffic and is blocked until the user taps Allow (§11.2). -->
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Vexo Bridge sends what your glasses see and hear to the laptop on your network.</string>
+	<string>Scene sends what your glasses see and hear to the laptop on your network.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_bonjour._tcp</string>
 		<!-- receiver/run.sh advertises this; Discovery.swift finds the laptop by it. -->
-		<string>_vexo._tcp</string>
+		<string>_scene._tcp</string>
 	</array>
 
 	<!-- §5.5 App Transport Security. The narrow key, NOT NSAllowsArbitraryLoads:
@@ -91,7 +91,7 @@
 	<!-- §5.6 Usage descriptions. No NSPhotoLibraryAddUsageDescription —
 	     the app never writes to the photo library. -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Vexo Bridge records audio from your glasses microphone.</string>
+	<string>Scene records audio from your glasses microphone.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Used only in testing, to stand in for the glasses camera with MockDeviceKit.</string>
 

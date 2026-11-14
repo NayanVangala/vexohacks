@@ -95,14 +95,14 @@ def approve(pid: int) -> dict:
     if spent + p["amount_cents"] > DAILY_CENTS:
         raise PaymentError(f"daily cap {_usd(DAILY_CENTS)} reached ({_usd(spent)} already)")
 
-    s = _stripe("POST", "/checkout/sessions", headers={"Idempotency-Key": f"vexo-pay-{pid}"}, data={
+    s = _stripe("POST", "/checkout/sessions", headers={"Idempotency-Key": f"scene-pay-{pid}"}, data={
         "mode": "payment",
         "success_url": SUCCESS_URL,
         "line_items[0][quantity]": 1,
         "line_items[0][price_data][currency]": "usd",
         "line_items[0][price_data][unit_amount]": p["amount_cents"],
         "line_items[0][price_data][product_data][name]": f"{p['memo']} (to settle with {p['counterparty']})",
-        "metadata[vexo_payment_id]": pid,
+        "metadata[scene_payment_id]": pid,
     })
     with memory._db_lock:
         memory.db().execute("UPDATE payments SET status='approved', session_id=?, url=? WHERE id=?",

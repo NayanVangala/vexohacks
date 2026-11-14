@@ -1,10 +1,10 @@
-# Vexo
+# Scene
 
-Memory for Meta Ray-Ban Display glasses. The glasses see and hear your day; Vexo remembers
+Memory for Meta Ray-Ban Display glasses. The glasses see and hear your day; Scene remembers
 where you left things, what people asked you to do, and money you're owed, and acts on it
 with a pinch of the Meta Neural Band.
 
-- **"Hey Vexo, where are my keys?"** answered out loud, with the frame where they were last seen.
+- **"Hey Scene, where are my keys?"** answered out loud, with the frame where they were last seen.
 - **Tasks from conversation.** "Can you send me the deck by 5?" becomes a task, and closes itself
   when you later say "I sent the deck".
 - **Money, safely.** Gemini reads the receipt, hears "I'll pay you back half", and *proposes* a
@@ -30,7 +30,7 @@ Ray-Ban Display ──Bluetooth──▶ iPhone app ──Wi-Fi──▶ laptop 
 | **Gemini 4 Hydrogen** | Sees every frame in real time: objects and where they are, what you're doing, receipts |
 | **OpenAI** | Whisper transcription, task and money extraction, embeddings, answers (Gemini covers all of this when no OpenAI key is set) |
 | **Stripe** | Checkout links for money you're owed, only after a human pinch |
-| **ElevenLabs** | Spoken answers to "hey vexo" (macOS `say` without a key) |
+| **ElevenLabs** | Spoken answers to "hey scene" (macOS `say` without a key) |
 
 ### Safety rails (in code, not prompts)
 
@@ -56,17 +56,17 @@ src/backend/               laptop backend (FastAPI)
   server.py                  /capture, /ask, /feed, /tasks, /items, /payments, /frames
   models.py                  Gemini 4 + OpenAI calls (plain REST)
   memory.py                  ingest lanes, SQLite store, semantic search, quote checks
-  voice.py                   "hey vexo" wake word, spoken answers
+  voice.py                   "hey scene" wake word, spoken answers
   payments.py                Stripe Checkout behind the approval gate
 src/followthrough/         Follow-Through agent + web dashboard (laptop web app)
-scripts/                   start-vexo.command (one-click start), render-icon.swift (app icon)
+scripts/                   start-scene.command (one-click start), render-icon.swift (app icon)
 claude/                    Claude Code + ruflo workspace state
 ```
 
 ## Run
 
-**Quick start:** double-click `scripts/start-vexo.command` on the laptop, open the Vexo app on the iPhone,
-tap **Start**. The receiver advertises itself over Bonjour (`_vexo._tcp`) and the app finds it,
+**Quick start:** double-click `scripts/start-scene.command` on the laptop, open the Scene app on the iPhone,
+tap **Start**. The receiver advertises itself over Bonjour (`_scene._tcp`) and the app finds it,
 so there's no IP to type.
 
 Receiver by hand (laptop):
@@ -98,7 +98,7 @@ API:
 ## Before a real-glasses run
 
 - [ ] **Developer Mode ON** for the glasses in the Meta AI app (it turns off after firmware updates).
-- [ ] **Local Network allowed** for Vexo Bridge in iPhone Settings ▸ Privacy & Security.
+- [ ] **Local Network allowed** for Scene in iPhone Settings ▸ Privacy & Security.
 - [ ] **Hotspot, not venue Wi-Fi**, if the phone can't reach the laptop (venue Wi-Fi often blocks it).
 - [ ] Keep the app in the foreground; there is no background capture.
 

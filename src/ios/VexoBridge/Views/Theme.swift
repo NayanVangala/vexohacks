@@ -3,7 +3,7 @@
 //  VexoBridge
 //
 //  Every color, radius, and type style the app uses. Placeholder palette
-//  (warm canvas, pastel stacked cards, coral action) until Vexo's real theme
+//  (warm canvas, pastel stacked cards, coral action) until Scene's real theme
 //  lands: change values here, nothing else needs to move.
 //
 

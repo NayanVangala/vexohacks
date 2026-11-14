@@ -292,7 +292,7 @@ final class WearablesManager {
                 case .available:
                     BridgeState.log("registration: available — tap Connect to register with Meta AI")
                 case .registering:
-                    BridgeState.log("registration: registering — approve Vexo Bridge in Meta AI")
+                    BridgeState.log("registration: registering — approve Scene in Meta AI")
                 case .registered:
                     BridgeState.log("registration: registered")
                     requestCameraPermissionOnce()
@@ -590,7 +590,7 @@ final class WearablesManager {
             BridgeState.log("!! cause: registration is '\(registration.label)', not 'registered'")
             switch registration {
             case .available:
-                BridgeState.log("   fix: tap Connect, then approve Vexo Bridge in the Meta AI app (§6.1 step 4)")
+                BridgeState.log("   fix: tap Connect, then approve Scene in the Meta AI app (§6.1 step 4)")
             case .unavailable:
                 BridgeState.log("   fix: install Meta AI, or turn Developer Mode on for these glasses (§6.2)")
             case .registering:

@@ -1,4 +1,4 @@
-"""Minimal receiver for the Vexo bridge.
+"""Scene receiver: the laptop side of the glasses bridge.
 
 Exists only to prove data arrives: saves every frame and WAV the phone sends,
 counts them, and reports the counts. No processing, no models, no storage
@@ -34,12 +34,12 @@ import memory
 import models
 import payments
 
-DATA_DIR = Path(os.environ.get("VEXO_DATA_DIR", Path(__file__).parent / "data"))
+DATA_DIR = Path(os.environ.get("SCENE_DATA_DIR", Path(__file__).parent / "data"))
 PORT = int(os.environ.get("PORT", "8001"))
 
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")  # HTTPS tunnel; display images need HTTPS
 
-app = FastAPI(title="vexo-bridge receiver")
+app = FastAPI(title="scene receiver")
 (DATA_DIR / "frames").mkdir(parents=True, exist_ok=True)
 app.mount("/frames", StaticFiles(directory=DATA_DIR / "frames"), name="frames")
 

@@ -287,7 +287,7 @@ private struct NeedsYouCard: View {
                     Spacer()
                     recentThings
                 }
-                Text(store.tasks.isEmpty ? "Nothing waiting. Say \u{201C}hey vexo\u{201D} to ask." : "open task\(store.tasks.count == 1 ? "" : "s") · nothing to approve")
+                Text(store.tasks.isEmpty ? "Nothing waiting. Say \u{201C}hey scene\u{201D} to ask." : "open task\(store.tasks.count == 1 ? "" : "s") · nothing to approve")
                     .foregroundStyle(Theme.inkSoft)
             }
             if let card = store.cards.first {

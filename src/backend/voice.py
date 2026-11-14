@@ -1,6 +1,6 @@
 """Wake word + spoken answers.
 
-"hey vexo, where are my keys" -> question -> memory.ask -> spoken on the laptop.
+"hey scene, where are my keys" -> question -> memory.ask -> spoken on the laptop.
 Rides on transcripts memory already makes, so it costs a regex per chunk, no second speech model.
 The answer plays from the LAPTOP: no HFP duplex fight on the phone, audience can't tell.
 ElevenLabs when ELEVENLABS_API_KEY is set, macOS `say` otherwise (a real path, not a stub).
@@ -14,12 +14,12 @@ import time
 
 import httpx
 
-# Whisper doesn't know "Vexo" and guesses; these are the guesses. Override with VEXO_WAKE_REGEX.
+# Whisper hears "scene" a few ways; these are the guesses. Override with SCENE_WAKE_REGEX.
 WAKE = re.compile(os.environ.get(
-    "VEXO_WAKE_REGEX", r"\b(?:hey|hi|ok|okay)[\s,.!]+(?:vexo|vexa|vexxo|vex oh|vecso|vesso|bexo|lexo|texo)\b"), re.I)
-WINDOW_S = float(os.environ.get("VEXO_WAKE_WINDOW_S", "6"))      # keep listening this long for the question
-MIN_QUESTION_CHARS = int(os.environ.get("VEXO_WAKE_MIN_CHARS", "12"))
-COOLDOWN_S = float(os.environ.get("VEXO_WAKE_COOLDOWN_S", "12"))  # glasses mic hears the laptop answer
+    "SCENE_WAKE_REGEX", r"\b(?:hey|hi|ok|okay)[\s,.!]+(?:scene|scenes|seen|sean|shean|sene|scen)\b"), re.I)
+WINDOW_S = float(os.environ.get("SCENE_WAKE_WINDOW_S", "6"))      # keep listening this long for the question
+MIN_QUESTION_CHARS = int(os.environ.get("SCENE_WAKE_MIN_CHARS", "12"))
+COOLDOWN_S = float(os.environ.get("SCENE_WAKE_COOLDOWN_S", "12"))  # glasses mic hears the laptop answer
 ELEVEN_VOICE = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 ELEVEN_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
 

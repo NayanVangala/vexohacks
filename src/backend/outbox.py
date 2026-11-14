@@ -8,20 +8,47 @@ confirms; with no executor we make a Gmail draft link and say nothing was sent.
 import itertools
 import json
 import os
+import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 import httpx
 
+DATA_DIR = Path(os.environ.get("SCENE_DATA_DIR", Path(__file__).parent / "data"))
 _ids = itertools.count(1)
 _drafts: dict[int, dict] = {}
 
 
+def _save() -> None:
+    """Drafts survive a restart (the phone may still be showing one)."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "drafts.json").write_text(json.dumps(_drafts))
+
+
+def _load() -> None:
+    global _ids
+    p = DATA_DIR / "drafts.json"
+    _drafts.clear()
+    if p.is_file():
+        try:
+            _drafts.update({int(k): v for k, v in json.loads(p.read_text()).items()})
+        except (ValueError, OSError):
+            pass
+    _ids = itertools.count(max(_drafts, default=0) + 1)
+
+
+def pending() -> list[dict]:
+    """Drafts still waiting for the wearer's yes, newest first."""
+    return [d for d in sorted(_drafts.values(), key=lambda d: -d["id"]) if d["status"] == "proposed"]
+
+
 def draft(to_name: str, subject: str, body: str, quote: str) -> dict:
     d = {"id": next(_ids), "kind": "email", "to_name": to_name, "to": os.environ.get("DEMO_EMAIL_TO", ""), "subject": subject,
-         "body": body, "quote": quote, "status": "proposed", "result": "", "link": ""}
+         "body": body, "quote": quote, "status": "proposed", "result": "", "link": "", "ts": time.time()}
     _drafts[d["id"]] = d
+    _save()
     return d
 
 
@@ -32,8 +59,10 @@ def draft_event(title: str, start_local: str, duration_min: int, quote: str) -> 
     """ValueError when start_local is not YYYY-MM-DDTHH:MM, so a vague time never becomes an event."""
     datetime.strptime(start_local, TIME_FORMAT)
     d = {"id": next(_ids), "kind": "calendar", "title": title, "start": start_local,
-         "duration_min": int(duration_min) or 30, "quote": quote, "status": "proposed", "result": "", "link": ""}
+         "duration_min": int(duration_min) or 30, "quote": quote, "status": "proposed", "result": "", "link": "",
+         "ts": time.time()}
     _drafts[d["id"]] = d
+    _save()
     return d
 
 
@@ -56,6 +85,7 @@ def _proposed(draft_id: int) -> dict:
 def dismiss(draft_id: int) -> dict:
     d = _proposed(draft_id) if draft_id in _drafts else get(draft_id)
     d["status"] = "dismissed"
+    _save()
     return d
 
 
@@ -80,6 +110,7 @@ def send(draft_id: int, client: httpx.Client | None = None) -> dict:
                                                               "body": d["body"], "authuser": account})
     if not url:
         d.update(status="drafted", link=link, result="No executor set up. Draft link only. Nothing was sent.")
+        _save()
         return d
     own = client is None
     client = client or httpx.Client(timeout=30, follow_redirects=True)
@@ -95,4 +126,8 @@ def send(draft_id: int, client: httpx.Client | None = None) -> dict:
     finally:
         if own:
             client.close()
+    _save()
     return d
+
+
+_load()

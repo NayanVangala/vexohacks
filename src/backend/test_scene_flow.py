@@ -25,7 +25,7 @@ def env(monkeypatch):
     monkeypatch.setattr(voice, "speak", lambda text: spoken.append(text))
     monkeypatch.setattr(memory, "awareness", awareness.Awareness())
     monkeypatch.setattr(memory, "DATA_DIR", Path(tempfile.mkdtemp()))
-    memory._cards.clear()
+    memory.clear_cards()
     notes.stop()
     yield rows, spoken
     notes.stop()
@@ -53,7 +53,7 @@ def test_accept_starts_notes_and_decline_does_not(env):
     oid = cards("offer")[0]["ref"]
     assert memory.answer_offer(oid, False) == {"offer": oid, "accepted": False} and not notes.active()
     memory.awareness = awareness.Awareness()
-    memory._cards.clear()
+    memory.clear_cards()
     three(MEETING)
     oid = cards("offer")[0]["ref"]
     memory.answer_offer(oid, True)

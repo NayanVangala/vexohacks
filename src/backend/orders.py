@@ -52,6 +52,12 @@ def get(order_id: int) -> dict | None:
     return _row(r[0] if r else None)
 
 
+def recent(limit: int = 20) -> list[dict]:
+    """Newest orders first, each with its kitchen stage (for the phone's orders list)."""
+    _init()
+    return [status_view(r["id"]) for r in memory.rows("SELECT id FROM orders ORDER BY id DESC LIMIT ?", limit)]
+
+
 def propose(place: dict, lines: list[dict]) -> dict:
     """lines: [{name, price_cents, qty}]. The total is computed here, from the lines only."""
     _init()

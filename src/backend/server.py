@@ -33,6 +33,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import inbox
 import orders
 import outbox
 import memory
@@ -228,6 +229,29 @@ async def notes_stop():
     return {"notes": nid}
 
 
+@app.get("/notes")
+async def notes_recent(limit: int = 20):
+    """Recent meeting notes for the phone (summary and counts). The full notes are /notes/<id>."""
+    return memory.notes_list(limit)
+
+
+@app.get("/activity")
+async def activity(limit: int = 50, today: bool = True):
+    """What Scene saw, heard and did (today by default), newest first."""
+    return memory.activity(limit, today)
+
+
+@app.get("/inbox")
+async def inbox_items():
+    """Everything waiting on the wearer, each with ready-made actions the phone can call with one tap."""
+    return await run_in_threadpool(inbox.items)
+
+
+@app.get("/orders")
+async def orders_recent(limit: int = 20):
+    return await run_in_threadpool(orders.recent, limit)
+
+
 @app.get("/notes/{note_id}")
 async def notes_get(note_id: int):
     out = memory.get_notes(note_id)
@@ -403,7 +427,7 @@ async def log_visitors(request: Request, call_next):
         # The glasses' WebView otherwise keeps an old app.js after an update.
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
     if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log",
-                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/location", "/agent", "/orders", "/order", "/dev")):
+                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/location", "/agent", "/orders", "/order", "/inbox", "/activity", "/dev")):
         with open(DATA_DIR / "glasses.log", "a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {request.method} {path} -> {response.status_code} "
                     f"ua={request.headers.get('user-agent', '?')[:160]}\n")

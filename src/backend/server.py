@@ -201,6 +201,25 @@ async def feed(after: int = 0):
     return [{**c, "image_url": _frame_url(c["frame"])} for c in memory.cards_after(after)]
 
 
+@app.middleware("http")
+async def log_visitors(request: Request, call_next):
+    """Record every non-API visitor (path + user agent): shows whether the glasses fetch anything at all."""
+    response = await call_next(request)
+    path = request.url.path
+    if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log", "/frames")):
+        with open(DATA_DIR / "glasses.log", "a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {request.method} {path} -> {response.status_code} "
+                    f"ua={request.headers.get('user-agent', '?')[:160]}\n")
+    return response
+
+
+@app.get("/")
+async def root():
+    """Opening the bare tunnel URL lands on the glasses app."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse("/glasses/")
+
+
 @app.post("/client-log")
 async def client_log(request: Request):
     """The glasses web app has no devtools: it beacons load info and errors here."""

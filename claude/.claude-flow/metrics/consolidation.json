@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-11-14T05:17:01.838Z",
+  "distillationEnabled": true,
+  "patternsConsolidated": 1,
+  "memoryCleaned": 1,
+  "duplicatesRemoved": 0,
+  "episodes": 1,
+  "episodeEmbeddings": 1,
+  "patternEmbeddings": 1,
+  "causalEdges": 0,
+  "promoted": 0,
+  "byProvenance": {
+    "proxy:structural": 1
+  },
+  "namespaces": [
+    "cost-tracking"
+  ],
+  "dryRun": false,
+  "corrupt": false,
+  "stores": [
+    {
+      "dbPath": "/Users/nayanvangala/vexohacks/.swarm/memory.db",
+      "processed": 1,
+      "patterns": 1
+    },
+    {
+      "dbPath": "/Users/nayanvangala/vexohacks/.swarm/agentdb-memory.db",
+      "processed": 0,
+      "patterns": 0
+    }
+  ]
+}

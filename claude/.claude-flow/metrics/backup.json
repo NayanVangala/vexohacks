@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-11-14T03:11:10.263Z",
+  "backedUp": true,
+  "backups": [
+    {
+      "backedUp": true,
+      "path": "/Users/nayanvangala/vexohacks/.swarm/backups/memory-2026-11-14T03-11-10-237Z.db",
+      "sizeBytes": 483328,
+      "rotatedAway": [],
+      "method": "native-online-backup",
+      "dbPath": "/Users/nayanvangala/vexohacks/.swarm/memory.db"
+    },
+    {
+      "backedUp": true,
+      "path": "/Users/nayanvangala/vexohacks/.swarm/backups/store-agentdb-memory.db-2026-11-14T03-11-10-260Z.db",
+      "sizeBytes": 483328,
+      "rotatedAway": [],
+      "method": "native-online-backup",
+      "dbPath": "/Users/nayanvangala/vexohacks/.swarm/agentdb-memory.db"
+    }
+  ],
+  "path": "/Users/nayanvangala/vexohacks/.swarm/backups/memory-2026-11-14T03-11-10-237Z.db",
+  "sizeBytes": 966656,
+  "rotatedAway": 0,
+  "method": "native-online-backup"
+}

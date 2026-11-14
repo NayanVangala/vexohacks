@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-11-14T05:04:01.742Z",
+  "projectRoot": "/Users/nayanvangala/vexohacks",
+  "structure": {
+    "hasPackageJson": false,
+    "hasTsConfig": false,
+    "hasClaudeConfig": true,
+    "hasClaudeFlow": true
+  },
+  "scannedAt": 1794632641742
+}

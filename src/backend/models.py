@@ -79,6 +79,26 @@ Each memory has an id, kind, text, place, and age. Return JSON:
 If the memories don't answer it, say so briefly and use null."""
 
 
+GUIDE_PROMPT = """You walk someone wearing camera glasses to a thing they are looking for.
+Image 1 is what they see right now. Image 2 (if present) is a photo taken earlier where the thing was last seen.
+Target: {name}, last seen {place}. Your last instruction was: {last!r}.
+Return JSON {{"arrived": bool, "instruction": str}}.
+- If the target is visible in image 1: arrived true, and the instruction says where it is in view
+  ("There it is, on the white table to your left.").
+- Otherwise arrived false and ONE short next step (at most 12 words) using the person's own left/right/ahead and
+  landmarks you can actually see in image 1 that match image 2 or the remembered place ("Turn left toward the window.").
+- If you cannot tell where they are, say "Turn slowly so I can see more." Never guess.
+- Never tell them to run, climb, cross a road, or go down stairs. Do not repeat your last instruction word for word."""
+
+
+def guide(now_jpeg: bytes, target: dict, target_jpeg: bytes | None, last: str = "") -> dict:
+    """The next step toward `target` ({name, place}), from what the glasses see now and the photo of the spot."""
+    img = lambda b: {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(b).decode()}}  # noqa: E731
+    parts = [img(now_jpeg)] + ([img(target_jpeg)] if target_jpeg else [])
+    parts.append({"text": GUIDE_PROMPT.format(name=target.get("name", "it"), place=target.get("place") or "unknown", last=last)})
+    return _gemini_json(GEMINI_MODEL, parts)
+
+
 def _use_openai() -> bool:
     return bool(os.environ.get("OPENAI_API_KEY"))
 

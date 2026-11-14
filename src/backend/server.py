@@ -159,7 +159,7 @@ async def ask(text: str | None = Form(None), audio: UploadFile | None = File(Non
         raise HTTPException(status_code=422, detail="send `text` or `audio` with speech in it")
     out = await run_in_threadpool(memory.ask, text.strip())  # blocking model calls off the event loop
     print(f"ASK {out['question']!r} -> {out['answer']!r}", flush=True)
-    return {**out, "image_url": _frame_url(out["frame"])}
+    return {**{k: v for k, v in out.items() if k != "target"}, "image_url": _frame_url(out["frame"])}
 
 
 @app.get("/tasks")

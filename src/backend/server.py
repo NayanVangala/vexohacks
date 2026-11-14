@@ -29,9 +29,11 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 import memory
 import models
+import notes
 import payments
 
 DATA_DIR = Path(os.environ.get("SCENE_DATA_DIR", Path(__file__).parent / "data"))
@@ -196,6 +198,71 @@ async def payment_reject(pid: int):
     return {"rejected": pid}
 
 
+@app.post("/offers/{offer_id}/accept")
+async def offer_accept(offer_id: int):
+    """Glasses' Yes button on an offer card (take notes)."""
+    try:
+        return await run_in_threadpool(memory.answer_offer, offer_id, True)
+    except KeyError:
+        raise HTTPException(status_code=409, detail="that offer is not waiting for an answer")
+
+
+@app.post("/offers/{offer_id}/decline")
+async def offer_decline(offer_id: int):
+    try:
+        return await run_in_threadpool(memory.answer_offer, offer_id, False)
+    except KeyError:
+        raise HTTPException(status_code=409, detail="that offer is not waiting for an answer")
+
+
+@app.post("/notes/stop")
+async def notes_stop():
+    nid = await run_in_threadpool(memory.finish_notes)  # one model call, off the event loop
+    if nid is None:
+        raise HTTPException(status_code=409, detail="no notes are being taken")
+    return {"notes": nid}
+
+
+@app.get("/notes/{note_id}")
+async def notes_get(note_id: int):
+    out = memory.get_notes(note_id)
+    if out is None:
+        raise HTTPException(status_code=404, detail="no such notes")
+    return out
+
+
+class SceneIn(BaseModel):
+    type: str
+    confidence: float
+    text: str = ""
+    frame: str | None = None   # optional saved frame filename, so a dev slide can be attached to the notes
+
+
+class LineIn(BaseModel):
+    text: str
+
+
+def _dev_only() -> None:
+    if os.environ.get("SCENE_DEV") != "1":
+        raise HTTPException(status_code=404)
+
+
+@app.post("/dev/scene")
+async def dev_scene(body: SceneIn):
+    """Demo without glasses: pretend a frame came back with this scene. Needs SCENE_DEV=1."""
+    _dev_only()
+    await run_in_threadpool(memory.handle_scene, body.model_dump(exclude={"frame"}), body.frame)
+    return {"ok": True}
+
+
+@app.post("/dev/line")
+async def dev_line(body: LineIn):
+    """Demo without a mic: add a spoken line to the active note session. Needs SCENE_DEV=1."""
+    _dev_only()
+    notes.add_line(body.text)
+    return {"ok": True}
+
+
 @app.get("/feed")
 async def feed(after: int = 0):
     return [{**c, "image_url": _frame_url(c["frame"])} for c in memory.cards_after(after)]
@@ -206,7 +273,7 @@ async def log_visitors(request: Request, call_next):
     """Record every non-API visitor (path + user agent): shows whether the glasses fetch anything at all."""
     response = await call_next(request)
     path = request.url.path
-    if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log", "/frames")):
+    if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log", "/frames", "/offers", "/notes", "/dev")):
         with open(DATA_DIR / "glasses.log", "a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {request.method} {path} -> {response.status_code} "
                     f"ua={request.headers.get('user-agent', '?')[:160]}\n")

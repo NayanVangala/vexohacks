@@ -3,11 +3,11 @@
 Set OPENAI_API_KEY and it works. Without it only the staged demo runs, and it is labelled demo."""
 import os
 import threading
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from . import agent
+from . import agent, voice
 from .config import get_config
 from .demo import DEMO_SEGMENTS, FakeLLM
 from .executor import execute
@@ -38,6 +38,7 @@ def health():
     return {"llm": "openai" if cfg.openai_api_key else "demo only", "model": cfg.model,
             "transcribe_model": cfg.transcribe_model,
             "executor": "configured" if cfg.executor_url else "not set (drafts only)",
+            "voice": "elevenlabs" if cfg.eleven_key else "browser voice",
             "email_to": cfg.email_to, "calendar_account": cfg.calendar_account, "demo_loaded": store.demo}
 
 
@@ -76,6 +77,16 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         store.replace([], demo=False)
     store.append(segs)
     return {"added": len(segs), "segments": len(store.segments)}
+
+
+@app.post("/api/voice/hear")
+async def hear(audio: UploadFile = File(...)):
+    """A short spoken answer to text. Used when the browser has no speech recognition of its own. Not added to the transcript."""
+    cfg = get_config()
+    if not cfg.openai_api_key:
+        raise HTTPException(503, "OPENAI_API_KEY is not set, cannot transcribe.")
+    segs = transcribe(await audio.read(), audio.filename or "answer.webm", 0, cfg)
+    return {"heard": " ".join(x.text for x in segs)}
 
 
 @app.post("/api/demo/load")
@@ -146,9 +157,8 @@ def edit(item_id: str, body: EditIn):
         return it
 
 
-@app.post("/api/items/{item_id}/approve")
-def approve(item_id: str):
-    """The only route that runs anything. Only a verified, pending item can be approved."""
+def _approve(item_id: str):
+    """The only code that runs anything. Only a verified, pending item can be approved."""
     with approve_lock:
         it = _get(item_id)
         if it.status != "pending":
@@ -157,6 +167,45 @@ def approve(item_id: str):
         store.items[item_id] = done
         store.save()
         return done
+
+
+@app.post("/api/items/{item_id}/approve")
+def approve(item_id: str):
+    """Approve with the button."""
+    return _approve(item_id)
+
+
+@app.get("/api/items/{item_id}/question")
+def question(item_id: str, n: int = 0, total: int = 1):
+    """The sentence that is spoken to ask for approval."""
+    return {"text": voice.question_for(_get(item_id), get_config(), n, total)}
+
+
+@app.get("/api/items/{item_id}/speech")
+def speech(item_id: str, n: int = 0, total: int = 1):
+    """That sentence as audio in the ElevenLabs voice. 503 means no key, and the dashboard uses the browser voice."""
+    cfg = get_config()
+    text = voice.question_for(_get(item_id), cfg, n, total)
+    try:
+        return Response(voice.speak(text, cfg), media_type="audio/mpeg")
+    except RuntimeError as e:
+        raise HTTPException(503 if not cfg.eleven_key else 502, str(e))
+
+
+class HeardIn(BaseModel):
+    heard: str = ""
+
+
+@app.post("/api/items/{item_id}/voice")
+def voice_answer(item_id: str, body: HeardIn):
+    """Approve with a voice answer. A clear yes approves this one item, a clear no dismisses it,
+    anything else changes nothing."""
+    answer = voice.parse_answer(body.heard)
+    if answer == "yes":
+        return {"answer": answer, "item": _approve(item_id)}
+    if answer == "no":
+        return {"answer": answer, "item": dismiss(item_id)}
+    return {"answer": answer, "item": _get(item_id)}
 
 
 @app.post("/api/items/{item_id}/retry")

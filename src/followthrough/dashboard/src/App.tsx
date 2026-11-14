@@ -4,12 +4,14 @@ import { api } from './api'
 import type { AppState, EditPatch } from './types'
 import Transcript from './Transcript'
 import Ledger from './Ledger'
+import Voice from './Voice'
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null)
   const [busy, setBusy] = useState('')            // what is running: '', 'run', 'add', or an item id
   const [error, setError] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
+  const [voiceStart, setVoiceStart] = useState(0)   // bumped after a successful find, starts voice approval when it is on
   const [view, setView] = useState<'commitments' | 'conversation'>('commitments')   // phone only
 
   const refresh = useCallback(async () => {
@@ -28,8 +30,9 @@ export default function App() {
     const r = await api.run()
     const first = r.items.find((i) => i.status === 'pending') ?? r.items[0]
     if (first) setSelected(first.id)
+    setVoiceStart((n) => n + 1)
   })
-  const addThenFind = (fn: () => Promise<unknown>) => act('add', async () => { await fn(); const r = await api.run(); if (r.items[0]) setSelected(r.items[0].id) })
+  const addThenFind = (fn: () => Promise<unknown>) => act('add', async () => { await fn(); const r = await api.run(); if (r.items[0]) setSelected(r.items[0].id); setVoiceStart((n) => n + 1) })
 
   const items = state?.items ?? []
   const segments = state?.segments ?? []
@@ -74,6 +77,8 @@ export default function App() {
             <button className="shrink-0 font-bold underline underline-offset-4" onClick={() => setError('')}>Dismiss</button>
           </div>
         )}
+
+        <Voice items={items} voice={h?.voice ?? 'browser voice'} startSignal={voiceStart} onSelect={(id) => { setSelected(id); setView('commitments') }} onAfter={refresh} />
 
         <main className="grid min-h-0 flex-1 lg:grid-cols-[1.1fr_1fr] lg:divide-x lg:divide-line">
           <div className={`${view === 'conversation' ? 'flex' : 'hidden'} min-h-0 flex-col lg:flex [&>section]:min-h-0 [&>section]:flex-1`}>

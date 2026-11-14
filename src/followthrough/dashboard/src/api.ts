@@ -23,6 +23,12 @@ export const api = {
     const f = new FormData(); f.append('audio', file, name)
     return call('/transcribe', { method: 'POST', body: f })
   },
+  hear: (clip: Blob) => {
+    const f = new FormData(); f.append('audio', clip, 'answer.webm')
+    return call<{ heard: string }>('/voice/hear', { method: 'POST', body: f })
+  },
+  question: (id: string, n = 0, total = 1) => call<{ text: string }>(`/items/${id}/question?n=${n}&total=${total}`),
+  voiceAnswer: (id: string, heard: string) => post<{ answer: 'yes' | 'no' | 'unclear'; item: Item }>(`/items/${id}/voice`, { heard }),
   approve: (id: string) => post<Item>(`/items/${id}/approve`),
   retry: (id: string) => post<Item>(`/items/${id}/retry`),
   dismiss: (id: string) => post<Item>(`/items/${id}/dismiss`),

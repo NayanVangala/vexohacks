@@ -13,11 +13,12 @@ SCHEMA = {
     "properties": {"commitments": {"type": "array", "items": {
         "type": "object",
         "additionalProperties": False,
-        "required": ["action", "title", "owner", "counterpart", "quote", "segment_index", "due_local",
+        "required": ["action", "title", "summary", "owner", "counterpart", "quote", "segment_index", "due_local",
                      "duration_min", "changed_from", "subject", "body"],
         "properties": {
             "action": {"type": "string", "enum": ["calendar", "email", "reply", "todo"]},
             "title": {"type": "string"},
+            "summary": {"type": "string"},
             "owner": {"type": "string"},
             "counterpart": {"type": "string"},
             "quote": {"type": "string"},
@@ -57,6 +58,8 @@ Rules:
 - due_local is YYYY-MM-DDTHH:MM in {cfg.timezone}. Resolve words like "tomorrow" from the current date above. If a day is given with no hour, use 17:00. If no time at all, use an empty string.
 - action: "calendar" for meetings or time blocks, "email" when something must be sent to a person, "reply" for a short message back to someone, "todo" for anything else.
 - email and reply: write subject (email only, else empty) and body, 2 to 4 plain sentences from {cfg.wearer}. For calendar and todo leave subject and body empty.
+- title: 3 to 7 words that say exactly what this is for, with the person or topic. Meeting: "Demo sync with Nayan". Email: "Send Nayan the deck". To-do: "Call the venue about parking". Never use generic titles like "Meeting", "Event", "Follow up" or "Untitled".
+- summary: one plain sentence under 20 words saying what this is for and who it involves. No quotes.
 - owner is who must do it. counterpart is who it is for.
 - duration_min: 30 unless the conversation says otherwise."""
 

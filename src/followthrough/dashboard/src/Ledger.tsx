@@ -47,6 +47,7 @@ function Entry({ it, rank, segments, health, selected, busy, ...fn }:
           <span className={`shrink-0 text-base font-bold ${color}`}>{statusLabel[it.status]}</span>
         </div>
         <h3 className="mt-1 text-2xl font-extrabold leading-tight">{it.title}</h3>
+        {it.summary && <p className="mt-1 text-lg text-muted">{it.summary}</p>}
         {(it.action === 'calendar' || it.due_local) && (
           <p className="mt-1 text-lg text-muted">
             {dueLabel(it.due_local)}{it.changed_from ? `, changed from ${it.changed_from}` : ''}

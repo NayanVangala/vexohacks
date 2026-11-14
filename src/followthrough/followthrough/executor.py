@@ -17,13 +17,21 @@ def _start_end(item: Item, cfg: Config):
     return start, start + timedelta(minutes=item.duration_min)
 
 
+def describe(item: Item) -> str:
+    """Calendar description: one short line on what it is for, then where it came from."""
+    heard = f'Heard: "{item.quote}"'
+    if item.proof.start is not None:
+        heard += f" ({int(item.proof.start) // 60:02d}:{int(item.proof.start) % 60:02d})"
+    return (item.summary + "\n\n" if item.summary else "") + heard + "\nAdded by Follow-Through"
+
+
 def draft_link(item: Item, cfg: Config) -> str:
     """A prefilled Google Calendar or Gmail compose link, used when no executor is set up."""
     if item.action == "calendar":
         s, e = _start_end(item, cfg)
         stamp = lambda d: d.strftime("%Y%m%dT%H%M%S")
         q = urlencode({"action": "TEMPLATE", "text": item.title, "dates": f"{stamp(s)}/{stamp(e)}",
-                       "details": f'Said: "{item.quote}"\nCaptured by Follow-Through',
+                       "details": describe(item),
                        "ctz": cfg.timezone, "authuser": cfg.calendar_account})
         return "https://calendar.google.com/calendar/render?" + q
     if item.action == "email":
@@ -46,7 +54,7 @@ def execute(item: Item, cfg: Config, todos: list, client: httpx.Client = None) -
             return item.model_copy(update={"status": "drafted", "link": draft_link(item, cfg),
                                            "result": "No executor set up. Draft link only. Nothing was sent."})
         payload = {"token": cfg.executor_token, "action": item.action, "title": item.title,
-                   "details": f'Said: "{item.quote}"\nCaptured by Follow-Through'}
+                   "details": describe(item)}
         if item.action == "email":
             payload.update(to=item.to, subject=item.subject or item.title, body=item.body)
         else:

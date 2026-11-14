@@ -1,0 +1,39 @@
+# Xcode
+xcuserdata/
+DerivedData/
+build/
+.swiftpm/
+*.xcuserstate
+*.hmap
+*.ipa
+*.dSYM.zip
+Secrets.xcconfig
+Local.xcconfig
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Receiver output: frames and audio of real people. Never commit.
+receiver/data/
+*.wav
+*.jpg
+*.jpeg
+*.mov
+*.log
+
+# Secrets
+.env
+.env.*
+
+.DS_Store
+
+# Live Claude Code / ruflo state; plugins recreate these in any folder they touch. Snapshot lives in claude/.
+.claude/
+.claude-flow/
+.swarm/
+ruvector.db
+!.env.example
+agentdb.rvf*

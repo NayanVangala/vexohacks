@@ -202,10 +202,21 @@ struct ActivityItem: Decodable, Identifiable, Sendable {
 }
 
 /// Follow-Through's state, just the parts the phone shows.
-private struct FTState: Decodable {
-    struct Item: Decodable { let id: String; let title: String; let quote: String?; let status: String; let action: String? }
-    let items: [Item]
+/// A commitment Follow-Through found in the conversation, in any state (its /api/state items).
+struct Promise: Decodable, Identifiable, Equatable {
+    let id: String
+    let title: String
+    let quote: String?
+    let status: String          // pending | needs_review | done | drafted | failed | dismissed
+    let action: String?         // email | reply | calendar | todo
+    let counterpart: String?
+    let dueLocal: String?       // "YYYY-MM-DDTHH:MM", local time
+    let result: String?
+    let issues: [String]?
+    let link: String?
 }
+
+private struct FTState: Decodable { let items: [Promise] }
 
 extension BackendClient {
     /// Run an inbox action exactly as the server described it (JSON body when it gave one).
@@ -252,6 +263,7 @@ final class MemoryStore {
     private(set) var inbox: [InboxItem] = []       // Needs you: Scene's /inbox + Follow-Through's pending promises
     private(set) var notes: [NoteSummary] = []
     private(set) var activity: [ActivityItem] = []
+    private(set) var promises: [Promise] = []      // Follow-through tab: every promise, any state
     private(set) var online = false
     private(set) var lastAnswer: AskResult?
     private(set) var asking = false
@@ -370,6 +382,7 @@ final class MemoryStore {
         async let ft: FTState = backend.get("/ft/api/state")
         var items = (try? await ib) ?? inbox.filter { $0.type != "promise" }
         if let ft = try? await ft {   // Follow-Through is optional: missing just means no promises
+            promises = ft.items.filter { $0.status != "dismissed" }
             let now = Date().timeIntervalSince1970
             items += ft.items.filter { $0.status == "pending" }.map { i in
                 InboxItem(type: "promise", ref: i.id, title: i.title, body: i.quote.map { "\u{201C}\($0)\u{201D}" } ?? "",
@@ -381,6 +394,19 @@ final class MemoryStore {
         inbox = items
         if let n = try? await n { notes = n }
         if let a = try? await a { activity = a }
+    }
+
+    /// Follow-through tab buttons: approve | dismiss | retry, straight to Follow-Through.
+    func promise(_ id: String, _ verb: String) async {
+        do {
+            _ = try await backend.perform(InboxAction(label: verb, method: "POST", path: "/ft/api/items/\(id)/\(verb)",
+                                                      primary: false, json: nil))
+            BridgeState.log("FOLLOW-THROUGH \(id): \(verb)")
+        } catch {
+            BridgeState.logError("follow-through \(verb)", error)
+            notice = "Couldn\u{2019}t \(verb) that promise: \(error.localizedDescription)"
+        }
+        await refreshInbox()
     }
 
     /// One tap on an inbox button. Payments go through `approve` so the QR sheet opens.

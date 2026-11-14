@@ -246,3 +246,133 @@ struct ActivitySection: View {
         }
     }
 }
+
+// MARK: - Follow-through (every promise Follow-Through found, and what happened to it)
+
+struct PromisesSection: View {
+    let store: MemoryStore
+
+    var body: some View {
+        if !store.promises.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Eyebrow("Promises you made")
+                VStack(spacing: -Theme.overlap) {
+                    ForEach(Array(store.promises.enumerated()), id: \.element.id) { i, p in
+                        StackCard(color: color(p), index: i) { PromiseCard(promise: p, store: store) }
+                            .scrollDepth()
+                    }
+                }
+                .animation(.spring(response: 0.5, dampingFraction: 0.85), value: store.promises)
+            }
+        }
+    }
+
+    private func color(_ p: Promise) -> Color {
+        switch p.status {
+        case "done", "drafted": Theme.mint
+        case "failed", "needs_review": Theme.butter
+        default: Theme.rose
+        }
+    }
+}
+
+private struct PromiseCard: View {
+    let promise: Promise
+    let store: MemoryStore
+    @Environment(\.openURL) private var openURL
+    @State private var busy: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Eyebrow(state)
+                Spacer()
+                Image(systemName: icon).font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkSoft)
+            }
+            Text(promise.title).font(.title3.weight(.semibold)).foregroundStyle(Theme.ink)
+            if let meta { Text(meta).font(.footnote).foregroundStyle(Theme.inkSoft) }
+            if let q = promise.quote, !q.isEmpty {
+                Text("\u{201C}\(q)\u{201D}").font(.subheadline.italic()).foregroundStyle(Theme.inkSoft).lineLimit(3)
+            }
+            if promise.status == "needs_review", let issues = promise.issues, !issues.isEmpty {
+                Label(issues.joined(separator: "; ").capitalizedFirst, systemImage: "exclamationmark.circle")
+                    .font(.footnote).foregroundStyle(Theme.ink)
+            }
+            if let r = promise.result, !r.isEmpty, ["done", "drafted", "failed"].contains(promise.status) {
+                Text(r).font(.footnote).foregroundStyle(Theme.ink.opacity(0.75))
+            }
+            HStack(spacing: 10) {
+                switch promise.status {
+                case "pending":
+                    button("Approve", "approve", primary: true)
+                    button("Not now", "dismiss")
+                case "needs_review":
+                    button("Not now", "dismiss")
+                case "failed":
+                    button("Try again", "retry", primary: true)
+                default:
+                    EmptyView()
+                }
+            }
+            if let link = promise.link, let url = URL(string: link), promise.status == "drafted" {
+                Button { openURL(url) } label: {
+                    Label("Open draft", systemImage: "arrow.up.right").font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.ink)
+                }
+                .buttonStyle(.squish)
+            }
+        }
+    }
+
+    private var state: String {
+        switch promise.status {
+        case "pending": "Waiting on your yes"
+        case "needs_review": "Needs a look"
+        case "done": "Done"
+        case "drafted": "Drafted"
+        case "failed": "Didn\u{2019}t go through"
+        default: promise.status
+        }
+    }
+
+    private var icon: String {
+        switch promise.action {
+        case "email", "reply": "envelope"
+        case "calendar": "calendar"
+        default: "checklist"
+        }
+    }
+
+    /// "To Sam · Tue 4:00 PM"
+    private var meta: String? {
+        var bits: [String] = []
+        if let c = promise.counterpart, !c.isEmpty { bits.append("With \(c)") }
+        if let d = promise.dueLocal, !d.isEmpty {
+            let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm"
+            bits.append(f.date(from: d).map { $0.formatted(.dateTime.weekday(.abbreviated).hour().minute()) } ?? d)
+        }
+        return bits.isEmpty ? nil : bits.joined(separator: ", ")
+    }
+
+    private func button(_ label: String, _ verb: String, primary: Bool = false) -> some View {
+        Button {
+            busy = verb
+            Task { await store.promise(promise.id, verb); busy = nil }
+        } label: {
+            HStack(spacing: 6) {
+                if busy == verb { ProgressView().controlSize(.small).tint(primary ? Theme.card : Theme.ink) }
+                Text(label).font(.subheadline.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 13)
+            .foregroundStyle(primary ? Theme.card : Theme.ink)
+            .background(primary ? Theme.ink : .clear, in: Capsule())
+            .overlay(Capsule().stroke(Theme.ink.opacity(primary ? 0 : 0.25)))
+        }
+        .buttonStyle(.squish)
+        .disabled(busy != nil)
+    }
+}
+
+private extension String {
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}

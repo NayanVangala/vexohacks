@@ -220,6 +220,13 @@ async def root():
     return RedirectResponse("/glasses/")
 
 
+@app.get("/favicon.ico")
+async def favicon():
+    """Meta AI fetches this for the web app's icon in the glasses' app list."""
+    from fastapi.responses import FileResponse
+    return FileResponse(GLASSES_DIR / "icon.png", media_type="image/png")
+
+
 @app.post("/client-log")
 async def client_log(request: Request):
     """The glasses web app has no devtools: it beacons load info and errors here."""

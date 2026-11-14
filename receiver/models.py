@@ -2,7 +2,7 @@
 
 Keys from env: GEMINI_API_KEY (required), OPENAI_API_KEY (optional: without it Gemini does
 the hearing/thinking/embedding too). Model names overridable by env.
-Plain httpx REST, no SDKs. Gemini 4 call shape is argon4hack's (real-server/core.py).
+Plain httpx REST, no SDKs.
 """
 
 import base64

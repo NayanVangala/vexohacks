@@ -5,7 +5,7 @@
 //  MockDeviceKit wrapper. CLAUDE-ios.md §7.8, API shapes from §8.3.
 //
 //  This is the demo insurance: if the glasses fail at the venue, MockDeviceKit
-//  driving the phone's own back camera runs the whole Findr pipeline end to end.
+//  driving the phone's own back camera runs the whole pipeline end to end.
 //  Rehearse at least one full run in mock mode.
 //
 //  The entire file is gated so no mock code reaches a release build.

@@ -31,7 +31,7 @@ DATA_DIR = Path(os.environ.get("VEXO_DATA_DIR", Path(__file__).parent / "data"))
 ENABLED = bool(os.environ.get("GEMINI_API_KEY"))  # OpenAI optional: models.py falls back to Gemini
 
 FRAME_EVERY_S = float(os.environ.get("VEXO_FRAME_EVERY_S", "0"))  # 0 = every frame (Hydrogen is fast)
-MIN_SIM = float(os.environ.get("VEXO_MIN_SIM", "0.25"))  # weaker hits never reach the answer model (Findr's lesson:
+MIN_SIM = float(os.environ.get("VEXO_MIN_SIM", "0.25"))  # weaker hits never reach the answer model (lesson:
                                                          # an unrelated memory is worse than none). Tune live.
 EXTRACT_EVERY_S = 30.0   # how much transcript to batch before pulling tasks out
 DONE_MATCH = 0.5         # cosine needed for "I sent the deck" to close "Send the deck". Tune live.
@@ -152,7 +152,7 @@ def _norm(s: str) -> str:
 
 
 def quoted(item: dict, transcript: str) -> bool:
-    """argon4hack's verify_quote: an extracted item is kept only if its quote really was said.
+    """Quote verification: an extracted item is kept only if its quote really was said.
     Stops the model inventing a task, or a payment request, out of small talk."""
     q = _norm(item.get("quote") or "")
     ok = len(q) >= 8 and q in _norm(transcript)

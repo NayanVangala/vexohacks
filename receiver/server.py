@@ -4,7 +4,7 @@ Exists only to prove data arrives: saves every frame and WAV the phone sends,
 counts them, and reports the counts. No processing, no models, no storage
 beyond plain files.
 
-Wire format is the Findr bridge's (BackendClient.swift):
+Wire format is the iOS bridge's (BackendClient.swift):
   POST /capture   multipart, exactly one file part: `photo` (JPEG) or `audio` (WAV),
                   optional form field `source` ("activation" for the Activate photo)
   POST /activate  empty body

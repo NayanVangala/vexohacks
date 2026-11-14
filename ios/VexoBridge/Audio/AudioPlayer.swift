@@ -4,7 +4,7 @@
 //
 //  Activation chime. CLAUDE-ios.md §7.10.
 //
-//  Answer playback was removed with the rest of the Findr query path. Read
+//  Answer playback on the phone is unused: answers are spoken on the laptop. Read
 //  §11.5 before adding any: TTS out over the HFP channel while recording over
 //  it gives telephone-grade audio and may duck or drop the recording.
 //

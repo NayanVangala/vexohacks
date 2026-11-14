@@ -111,7 +111,7 @@ final class AudioChunkerTests: XCTestCase {
     }
 
     func testWavHeaderMathForStereoAnd8Bit() {
-        // Not a configuration Findr ships, but it pins the byte-rate and
+        // Not a configuration the app ships, but it pins the byte-rate and
         // block-align formulas rather than the constants.
         let wav = AudioChunker.wav(pcm: Data(count: 8), sampleRate: 8_000, channels: 2, bitsPerSample: 8)
         XCTAssertEqual(Self.le32(wav, 28), 8_000 * 2 * 1)         // byte rate

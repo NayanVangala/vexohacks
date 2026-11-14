@@ -67,7 +67,7 @@
 	<string>Needed to connect to your Meta glasses</string>
 
 	<!-- §5.4 Local network. The SDK needs NSBonjourServices for its WiFi
-	     transport. Findr needs NSLocalNetworkUsageDescription for a second,
+	     transport. The bridge needs NSLocalNetworkUsageDescription for a second,
 	     more important reason: every POST to the laptop is local-network
 	     traffic and is blocked until the user taps Allow (§11.2). -->
 	<key>NSLocalNetworkUsageDescription</key>
@@ -87,7 +87,7 @@
 	</dict>
 
 	<!-- §5.6 Usage descriptions. No NSPhotoLibraryAddUsageDescription —
-	     Findr never writes to the photo library. -->
+	     the app never writes to the photo library. -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Vexo Bridge records audio from your glasses microphone.</string>
 	<key>NSCameraUsageDescription</key>

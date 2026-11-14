@@ -1,8 +1,8 @@
-"""Wake word + spoken answers. Ported down from Findr's wake.py / answer.py.
+"""Wake word + spoken answers.
 
 "hey vexo, where are my keys" -> question -> memory.ask -> spoken on the laptop.
 Rides on transcripts memory already makes, so it costs a regex per chunk, no second speech model.
-The answer plays from the LAPTOP (Findr §11.5): no HFP duplex fight on the phone, audience can't tell.
+The answer plays from the LAPTOP: no HFP duplex fight on the phone, audience can't tell.
 ElevenLabs when ELEVENLABS_API_KEY is set, macOS `say` otherwise (a real path, not a stub).
 """
 

@@ -288,6 +288,27 @@ async def email_dismiss(draft_id: int):
         raise HTTPException(status_code=409, detail=str(e))
 
 
+@app.post("/slack/{draft_id}/send")
+async def slack_send(draft_id: int):
+    """The glasses' Send button for a Slack draft. Posts only when Slack confirms."""
+    try:
+        return await run_in_threadpool(outbox.send, draft_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="no such draft")
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/slack/{draft_id}/dismiss")
+async def slack_dismiss(draft_id: int):
+    try:
+        return outbox.dismiss(draft_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="no such draft")
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
 @app.post("/events/{draft_id}/add")
 async def event_add(draft_id: int):
     """The glasses' Add to calendar button. Creates the event only when the executor confirms."""
@@ -351,7 +372,7 @@ async def contacts_add(request: Request):
     """Add or update a contact (name, email). JSON or form. Sending to them still needs a tap AND the Apps Script allowlist."""
     f = await _fields(request)
     try:
-        contacts.add(f.get("name"), f.get("email"))
+        contacts.add(f.get("name"), f.get("email"), f.get("slack"))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return {"ok": True}
@@ -469,7 +490,7 @@ async def log_visitors(request: Request, call_next):
         # The glasses' WebView otherwise keeps an old app.js after an update.
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
     if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log",
-                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/location", "/agent", "/orders", "/order", "/inbox", "/activity", "/session", "/contacts", "/dev")):
+                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/location", "/agent", "/orders", "/order", "/inbox", "/activity", "/session", "/contacts", "/slack", "/dev")):
         with open(DATA_DIR / "glasses.log", "a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {request.method} {path} -> {response.status_code} "
                     f"ua={request.headers.get('user-agent', '?')[:160]}\n")

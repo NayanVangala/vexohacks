@@ -20,6 +20,7 @@ import contacts
 import lookup
 import models
 import outbox
+import slack
 # orders and payments import memory, which imports this module: they are imported inside the functions that use them.
 
 TOOL_BUDGET = 8            # tool calls per user turn before the agent gives up
@@ -32,6 +33,7 @@ def _system() -> str:
 You help with errands using tools: ordering food, emailing, the calendar, and searching the web. Rules:
 - Ordering: find_nearby for the restaurant, then ask_user to confirm the nearest place (say its street and distance). If they say no, offer the next one. After they confirm, get_menu, then ask_user what they would like (skip if they already said). Only order items get_menu returned; never invent items or prices. propose_order creates a card they approve; you cannot pay.
 - Email and contacts: lookup_contact checks the saved contacts. send_email takes the person's NAME only (never an email address); the app looks up their address. send_scheduling_link emails someone the wearer's scheduling link so they can pick a time ("find a time to meet with Maya"). send_email drafts it; the wearer taps Send. Write the subject and a 2 to 4 sentence body from them to the person. If you do not know what it should say, ask_user first. Never claim an email was sent: you only drafted it.
+- Slack: send_slack drafts a Slack message; the wearer taps Send. `to` is a person's NAME (they must have a Slack id saved) or a #channel from the allowed list. Never put an id or address in `to`. Write the message in the wearer's voice, one or two sentences.
 - Calendar: add_calendar_event needs a real day and time (start as YYYY-MM-DDTHH:MM local). If the day or time is missing or vague, ask_user first. Resolve "friday" or "tomorrow" from the date above. It makes a card the wearer approves.
 - Search: web_search for facts, products, news. Then answer in one or two spoken sentences; details are already on their screen.
 - "What is high protein" or "healthy options": get_menu then rank_menu, answer in one sentence.
@@ -55,6 +57,9 @@ TOOLS = [
     {"name": "send_email", "description": "Draft an email for the wearer to approve and send. It does not send by itself.",
      "parameters": {"type": "object", "properties": {"to": {"type": "string", "description": "Recipient's NAME, never an email address"}, "subject": {"type": "string"},
                                                      "body": {"type": "string"}}, "required": ["to", "subject", "body"]}},
+    {"name": "send_slack", "description": "Draft a Slack DM to a saved contact or a post to an allowed #channel. The wearer taps Send.",
+     "parameters": {"type": "object", "properties": {"to": {"type": "string", "description": "A person's NAME or a #channel, never an id"},
+                                                     "message": {"type": "string"}}, "required": ["to", "message"]}},
     {"name": "lookup_contact", "description": "Check whether a person is in the saved contacts.",
      "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "send_scheduling_link", "description": "Draft an email to a person with the wearer's scheduling link so they can pick a time to meet. The wearer taps Send.",
@@ -90,7 +95,8 @@ def _usd(c: int) -> str:
 
 class Agent:
     def __init__(self, step=None, say=None, push=None, where=None, sync=False, find=None, menu=None, propose=None,
-                 draft_email=None, draft_event=None, search=None, find_contact=None):
+                 draft_email=None, draft_event=None, search=None, find_contact=None,
+                 draft_slack=None, slack_target=None):
         self.step = step or models.agent_step
         self.say = say or (lambda text: None)
         self.push = push or (lambda kind, title, body, ref: None)
@@ -103,6 +109,8 @@ class Agent:
         self.draft_event = draft_event or outbox.draft_event
         self.search = search or models.search_web
         self.find_contact = find_contact or contacts.find
+        self.draft_slack = draft_slack or outbox.draft_slack
+        self.slack_target = slack_target or slack.target
         self._lock = threading.Lock()
         self._reset()
 
@@ -251,6 +259,20 @@ class Agent:
         if not subject or not body:
             return {"error": "subject and body are required: ask the user what the email should say"}
         return self._draft_email(str(a.get("to") or "").strip(), subject, body)
+
+    def _t_send_slack(self, a: dict) -> dict:
+        message, to = str(a.get("message") or "").strip(), str(a.get("to") or "").strip()
+        if not message:
+            return {"error": "message is required: ask the user what to say"}
+        t = self.slack_target(to)
+        if t is None:
+            return {"error": f"no Slack contact or allowed channel matches '{to}': tell the user, or offer email"}
+        d = self.draft_slack(t, message, self.utterance)
+        title, text = outbox.card_text({"kind": "slack", "target": t, "text": message})
+        self.push("slack", title, text, d["id"])
+        self.say("Drafted it. Pinch Send on your glasses when you're ready.")
+        self.status = "done"
+        return {"ok": True}
 
     def _t_lookup_contact(self, a: dict) -> dict:
         c = self.find_contact(str(a.get("name") or ""))

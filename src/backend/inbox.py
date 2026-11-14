@@ -35,7 +35,11 @@ def items() -> list[dict]:
         out.append({"type": "question", "id": st["session"], "title": "Scene asks", "body": st["question"], "ts": now,
                     "actions": [_act("Yes", "/agent/reply", {"text": "yes"}, primary=True), _act("No", "/agent/reply", {"text": "no"})]})
     for d in outbox.pending():
-        if d["kind"] == "email":
+        if d["kind"] == "slack":
+            title, body = outbox.card_text(d)
+            out.append({"type": "slack", "id": d["id"], "title": title, "ts": d["ts"], "body": body,
+                        "actions": [_act("Send", f"/slack/{d['id']}/send", primary=True), _act("Not now", f"/slack/{d['id']}/dismiss")]})
+        elif d["kind"] == "email":
             title, body = outbox.card_text(d)
             out.append({"type": "email", "id": d["id"], "title": title, "ts": d["ts"], "body": body,
                         "actions": [_act("Send", f"/emails/{d['id']}/send", primary=True), _act("Not now", f"/emails/{d['id']}/dismiss")]})

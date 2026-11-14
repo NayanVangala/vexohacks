@@ -35,13 +35,24 @@ class Rig:
             step=self.step, say=self.said.append, push=lambda *a: self.pushed.append(a), where=lambda: where, sync=True,
             find=lambda q, w: PLACES, menu=self.menu, propose=self.propose,
             draft_email=self.draft_email, draft_event=self.draft_event, search=self.search,
-            find_contact=lambda n: CONTACTS.get((n or "").strip().lower()))
+            find_contact=lambda n: CONTACTS.get((n or "").strip().lower()),
+            draft_slack=self.draft_slack, slack_target=self.slack_target)
         self.emails, self.events, self.searches = [], [], []
 
     def draft_email(self, to_name, subject, body, quote, to=None):
         d = {"id": 11, "to_name": to_name, "subject": subject, "body": body, "quote": quote, "to": to or "demo@example.com",
              "to_is_contact": bool(to)}
         self.emails.append(d)
+        return d
+
+    def slack_target(self, name):
+        n = (name or "").strip().lower()
+        return {"maya": {"kind": "dm", "label": "Maya Patel", "id": "U0MAYA"},
+                "#demo-team": {"kind": "channel", "label": "#demo-team", "id": "demo-team"}}.get(n)
+
+    def draft_slack(self, target, text, quote):
+        d = {"id": 21, "target": target, "text": text, "quote": quote}
+        self.slacks = getattr(self, "slacks", []) + [d]
         return d
 
     def draft_event(self, title, start, mins, quote):
@@ -274,3 +285,29 @@ def test_scheduling_link_missing_is_reported(monkeypatch):
     r = Rig([call("send_scheduling_link", to="Maya"), text("I don't have a scheduling link set up.")])
     r.agent.start("send maya my calendly")
     assert r.emails == [] and "scheduling link" in str(r.steps[-1]).lower()
+
+
+# ---- Slack ----
+
+def test_slack_dm_to_a_contact_makes_a_card_and_ends_the_session():
+    r = Rig([call("send_slack", to="Maya", message="Running ten minutes late.")])
+    r.agent.start("hey scene tell maya on slack I'm running late")
+    assert r.slacks[0]["target"]["id"] == "U0MAYA" and r.slacks[0]["text"] == "Running ten minutes late."
+    kind, title, body, ref = r.pushed[-1]
+    assert (kind, title, body, ref) == ("slack", "Slack message to Maya Patel?", "Running ten minutes late.", 21)
+    assert r.agent.state()["status"] == "done" and any("send" in s.lower() for s in r.said)
+
+
+def test_slack_channel_post_card_title():
+    r = Rig([call("send_slack", to="#demo-team", message="Build is ready.")])
+    r.agent.start("post in demo team that the build is ready")
+    assert r.pushed[-1][1] == "Post in #demo-team?"
+
+
+def test_slack_refuses_unknown_people_channels_and_raw_ids_and_empty_messages():
+    r = Rig([call("send_slack", to="zed", message="hi"), call("send_slack", to="#random", message="hi"),
+             call("send_slack", to="U0RAWID", message="hi"), call("send_slack", to="Maya", message="  "),
+             call("ask_user", question="Who should I message?")])
+    r.agent.start("slack zed")
+    assert not getattr(r, "slacks", []) and "no slack contact" in str(r.steps[1]).lower()
+    assert "message is required" in str(r.steps[-1]).lower() and r.agent.state()["status"] == "waiting"

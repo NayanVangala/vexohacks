@@ -113,6 +113,10 @@ hallucinated address can't be used. Unknown names still go to `DEMO_EMAIL_TO`, a
 meet with Maya" (`send_scheduling_link`) drafts an email with `SCHEDULING_LINK`. Real recipients need one Apps Script
 change (an `ALLOWED_TO` allowlist): see `docs/APPS-SCRIPT-UPDATE.md`.
 
+**Slack.** "Tell Maya on Slack I'm late" or "post in #scene-test that the build is ready" drafts a Slack card; Send posts it
+through your own Slack app (`SLACK_BOT_TOKEN`). DMs go only to contacts with a saved Slack id, posts only to
+`SLACK_CHANNELS`. Setup in `docs/SLACK-SETUP.md`.
+
 ## Agentic ordering: "hey Scene, place an order at McDonald's"
 
 A real tool-using agent (`agent.py`), not a script. It finds the nearest place (Gemini + Google Maps), reads the

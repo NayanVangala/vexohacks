@@ -119,3 +119,21 @@ def test_send_is_honest_when_the_executor_used_a_different_recipient():
     d = outbox.draft("Maya", "Hi", "Body", "q", to="maya@example.com")
     r = outbox.send(d["id"], client=c)
     assert r["status"] == "sent" and "ultra@example.com" in r["result"] and "not maya@example.com" in r["result"]
+
+
+def test_slack_draft_card_and_send_use_the_slack_module(monkeypatch):
+    import slack
+    tgt = {"kind": "dm", "label": "Maya Patel", "id": "U0MAYA"}
+    d = outbox.draft_slack(tgt, "running ten minutes late", "tell maya I'm late")
+    assert d["kind"] == "slack" and d["status"] == "proposed"
+    assert outbox.card_text(d) == ("Slack message to Maya Patel?", "running ten minutes late")
+    ch = outbox.draft_slack({"kind": "channel", "label": "#demo-team", "id": "demo-team"}, "build is ready", "q")
+    assert outbox.card_text(ch)[0] == "Post in #demo-team?"
+    monkeypatch.setattr(slack, "send", lambda t, text, client=None: (True, "Slack message sent to Maya Patel"))
+    r = outbox.send(d["id"])
+    assert r["status"] == "sent" and r["result"] == "Slack message sent to Maya Patel"
+    monkeypatch.setattr(slack, "send", lambda t, text, client=None: (False, "Slack said not_in_channel"))
+    r2 = outbox.send(ch["id"])
+    assert r2["status"] == "failed" and "not_in_channel" in r2["result"]
+    with pytest.raises(ValueError):
+        outbox.send(d["id"])                                   # already sent: no second message

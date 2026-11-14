@@ -113,6 +113,11 @@ function home() {
       <div class="title">${esc(s.card.body)}</div>
       <div class="row"><button class="primary" data-act="offer-yes" data-id="${s.card.ref}" data-card="${s.card.id}">Yes, take notes</button>
       <button data-act="offer-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
+  } else if (s?.kind === 'slack') {
+    hero = `<div class="card payment"><div class="eyebrow">${esc(s.card.title)}</div>
+      <div class="title">${esc(s.card.body)}</div>
+      <div class="row"><button class="primary" data-act="slack-send" data-id="${s.card.ref}" data-card="${s.card.id}">Send</button>
+      <button data-act="slack-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
   } else if (s?.kind === 'email') {
     hero = `<div class="card payment"><div class="eyebrow">${esc(s.card.title)}</div>
       <div class="title">${esc(s.card.body)}</div>
@@ -273,6 +278,11 @@ $app.addEventListener('click', async e => {
       state.note = d.status === 'sent' ? d.result : d.status === 'drafted' ? d.result : 'Not added: ' + d.result;
     }
     if (act === 'event-no') await api(`/events/${id}/dismiss`, 'POST').catch(() => {});
+    if (act === 'slack-send') {
+      const d = await api(`/slack/${id}/send`, 'POST');
+      state.note = d.result;
+    }
+    if (act === 'slack-no') await api(`/slack/${id}/dismiss`, 'POST').catch(() => {});
     if (act === 'email-no') await api(`/emails/${id}/dismiss`, 'POST').catch(() => {});
     if (act === 'clear-answer') { state.answer = null; }
     if (act === 'ask') {

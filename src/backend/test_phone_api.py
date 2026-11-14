@@ -150,3 +150,18 @@ def test_session_reports_whether_notes_are_being_taken():
     s = c.get("/session").json()["notes"]
     assert s["active"] is True and s["started"] == 100.0 and s["lines"] == 1
     notes.stop()
+
+
+def test_inbox_and_routes_cover_slack_drafts(monkeypatch):
+    import slack
+    d = outbox.draft_slack({"kind": "dm", "label": "Maya Patel", "id": "U0MAYA"}, "running late", "q")
+    item = next(i for i in c.get("/inbox").json() if i["type"] == "slack")
+    assert item["title"] == "Slack message to Maya Patel?" and item["body"] == "running late"
+    assert [(a["path"]) for a in item["actions"]] == [f"/slack/{d['id']}/send", f"/slack/{d['id']}/dismiss"]
+    monkeypatch.setattr(slack, "send", lambda t, text, client=None: (True, "Slack message sent to Maya Patel"))
+    r = c.post(f"/slack/{d['id']}/send").json()
+    assert r["status"] == "sent" and r["result"] == "Slack message sent to Maya Patel"
+    assert c.post(f"/slack/{d['id']}/send").status_code == 409
+    assert c.post("/slack/999/send").status_code == 404
+    e = outbox.draft_slack({"kind": "channel", "label": "#demo-team", "id": "demo-team"}, "hi", "q")
+    assert c.post(f"/slack/{e['id']}/dismiss").json()["status"] == "dismissed"

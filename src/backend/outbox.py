@@ -72,8 +72,20 @@ def _times(d: dict) -> tuple[datetime, datetime]:
     return start, start + timedelta(minutes=d["duration_min"])
 
 
+def draft_slack(target: dict, text: str, quote: str) -> dict:
+    """A Slack DM or channel post waiting for the wearer's tap. `target` comes from slack.target(), never from the model."""
+    d = {"id": next(_ids), "kind": "slack", "target": target, "text": text, "quote": quote, "status": "proposed",
+         "result": "", "link": "", "ts": time.time()}
+    _drafts[d["id"]] = d
+    _save()
+    return d
+
+
 def card_text(d: dict) -> tuple[str, str]:
-    """Title and body for an email draft's card: who it really goes to, so the tap is informed."""
+    """Title and body for a draft's card: who it really goes to, so the tap is informed."""
+    if d.get("kind") == "slack":
+        t = d["target"]
+        return (f"Post in {t['label']}?" if t["kind"] == "channel" else f"Slack message to {t['label']}?"), d["text"]
     title = f"Email {d['to_name'] or 'them'}?"
     if d.get("to_is_contact"):
         who = f"To: {d['to']} · "
@@ -105,6 +117,12 @@ def dismiss(draft_id: int) -> dict:
 def send(draft_id: int, client: httpx.Client | None = None) -> dict:
     """Send an approved draft. KeyError if unknown, ValueError if already sent or dismissed. Never raises on send trouble."""
     d = _proposed(draft_id)
+    if d["kind"] == "slack":
+        import slack
+        ok, result = slack.send(d["target"], d["text"], client=client)
+        d.update(status="sent" if ok else "failed", result=result)
+        _save()
+        return d
     url, token = os.environ.get("EXECUTOR_URL", ""), os.environ.get("EXECUTOR_TOKEN", "")
     details = f'Heard: "{d["quote"]}"\nAdded by Scene'
     account = os.environ.get("CALENDAR_ACCOUNT", "")

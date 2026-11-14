@@ -1,49 +1,91 @@
+/* Scene on the Ray-Ban Display. Same language as the phone app (src/ios/.../Theme.swift): pastel cards
+   with ink type, big numerals, letter-spaced labels, a stacked-deck edge, a coral focus, the sparkle.
+   Adapted for an additive display: black is transparent (so there is no page background and ink text
+   on a pastel card reads as a see-through cutout), and only the card that needs you is filled, so the
+   world stays visible. 600x600, D-pad focus + pinch. */
+
 :root {
-    --coral: #EC6A63; --butter: #F7D27E; --mint: #C4E9A8; --rose: #F0AEC4; --sky: #DDE6FF;
-    --ink: #000; --text: #FFF8EC; --soft: rgba(255, 248, 236, .62);
-  }
-  * { box-sizing: border-box; margin: 0; }
-  html, body { height: 100%; background: #000; color: var(--text);
-    font: 500 26px/1.25 -apple-system, "SF Pro Text", system-ui, sans-serif; }
-  #app { height: 100%; padding: 28px 30px; display: flex; flex-direction: column; gap: 18px; }
-  header { display: flex; align-items: center; gap: 12px; }
-  header svg { width: 34px; height: 34px; }
-  header h1 { font-size: 28px; font-weight: 600; letter-spacing: -.01em; }
-  header .status { margin-left: auto; font-size: 18px; color: var(--soft); display: flex; align-items: center; gap: 8px; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--mint); }
-  .dot.off { background: var(--coral); }
-  .eyebrow { font-size: 16px; letter-spacing: .14em; text-transform: uppercase; color: var(--soft); }
-  .big { font-size: 64px; font-weight: 600; letter-spacing: -.02em; line-height: 1; font-variant-numeric: tabular-nums; }
-  .title { font-size: 34px; font-weight: 600; letter-spacing: -.01em; }
-  .body { color: var(--soft); }
-  .card { border-radius: 30px; padding: 22px 24px; border: 2px solid rgba(255, 248, 236, .14); display: flex; flex-direction: column; gap: 10px; }
-  .card.payment { border-color: var(--butter); }
-  .card.task { border-color: var(--mint); }
-  .card.answer { border-color: var(--sky); }
-  .row { display: flex; gap: 12px; }
-  button, .item {
-    font: inherit; color: var(--text); background: transparent; border: 2px solid rgba(255, 248, 236, .22);
-    border-radius: 999px; padding: 14px 22px; text-align: left; cursor: pointer; outline: none;
-  }
-  button.primary { background: var(--butter); color: var(--ink); border-color: var(--butter); font-weight: 600; }
-  .row button { flex: 1; text-align: center; }
-  /* Focus is the whole interaction model on a D-pad: make it unmistakable. */
-  button:focus, .item:focus { border-color: var(--coral); box-shadow: 0 0 0 4px rgba(236, 106, 99, .45); }
-  button.primary:focus { background: var(--coral); border-color: var(--coral); color: var(--ink); }
-  .list { display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
-  .item { border-radius: 24px; display: flex; flex-direction: column; gap: 2px; }
-  .item small { font-size: 19px; color: var(--soft); }
-  .nav { margin-top: auto; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .grid button { text-align: center; padding: 12px 16px; }
-  .empty { color: var(--soft); }
-  @media (prefers-reduced-motion: no-preference) {
-    .card, .item { animation: rise .35s ease-out both; }
-    @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
-  }
-.card.ft { border-color: var(--rose); }
-.quote { font-size: 21px; font-style: italic; color: var(--soft); }
+  --butter: #F7D27E; --rose: #F0AEC4; --mint: #C4E9A8; --sky: #DDE6FF; --coral: #EC6A63;
+  --ink: #15130F; --ink-soft: rgba(21, 19, 15, .66);
+  --cream: #FFF8EC; --soft: rgba(255, 248, 236, .62); --line: rgba(255, 248, 236, .22);
+  --radius: 34px;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; background: #000; color: var(--cream);
+  font: 500 25px/1.25 -apple-system, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+#app { height: 100%; padding: 22px 26px 24px; display: flex; flex-direction: column; gap: 14px; }
+
+/* Header: the sparkle (same shape as the app icon), name, live dot. */
+header { display: flex; align-items: center; gap: 12px; }
+header svg { width: 32px; height: 32px; filter: drop-shadow(0 0 6px rgba(247, 210, 126, .9)); }
+header h1 { font-size: 27px; font-weight: 600; letter-spacing: -.01em; }
+header .status { margin-left: auto; font-size: 17px; color: var(--soft); display: flex; align-items: center; gap: 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 8px var(--mint); }
+.dot.off { background: var(--coral); box-shadow: 0 0 8px var(--coral); }
+
+/* Type scale: tiny tracked labels, big numerals, tight titles. */
+.eyebrow { font-size: 14px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--soft); }
+.big { font-size: 66px; font-weight: 600; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.title { font-size: 32px; font-weight: 600; letter-spacing: -.015em; line-height: 1.15; }
+.body, .empty { color: var(--soft); }
+.quote { font-size: 20px; font-style: italic; color: var(--soft); }
+.hint { font-size: 18px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Cards. Plain ones are an outline; the one that needs you is filled pastel with ink type,
+   with a second card's edge peeking below it, like the phone's stack. */
+.card { border-radius: var(--radius); padding: 22px 24px 20px; display: flex; flex-direction: column; gap: 10px;
+  border: 2px solid var(--line); }
+.card.payment, .card.ft, .card.task, .card.answer { border: 0; color: var(--ink); }
+.card.payment { background: var(--butter); box-shadow: 0 10px 0 -4px rgba(247, 210, 126, .45), 0 20px 0 -9px rgba(247, 210, 126, .18); }
+.card.ft      { background: var(--rose);   box-shadow: 0 10px 0 -4px rgba(240, 174, 196, .45), 0 20px 0 -9px rgba(240, 174, 196, .18); }
+.card.task    { background: var(--sky);    box-shadow: 0 10px 0 -4px rgba(221, 230, 255, .45), 0 20px 0 -9px rgba(221, 230, 255, .18); }
+.card.answer  { background: var(--mint);   box-shadow: 0 10px 0 -4px rgba(196, 233, 168, .45), 0 20px 0 -9px rgba(196, 233, 168, .18); }
+.card.payment .eyebrow, .card.ft .eyebrow, .card.task .eyebrow, .card.answer .eyebrow,
+.card.payment .body, .card.ft .body, .card.task .body, .card.answer .body,
+.card.payment .quote, .card.ft .quote, .card.task .quote, .card.answer .quote { color: var(--ink-soft); }
+
+/* Buttons. On the black page: cream outline. On a pastel card: ink outline, and the primary is the
+   phone's ink pill (on the lens it reads as a see-through pill with cream type). */
+.row { display: flex; gap: 10px; margin-top: 4px; }
+button, .item {
+  font: inherit; color: var(--cream); background: transparent; border: 2px solid var(--line);
+  border-radius: 999px; padding: 13px 22px; text-align: left; cursor: pointer; outline: none;
+  transition: transform .12s ease-out;
+}
+.row button { flex: 1; text-align: center; }
+button.primary { font-weight: 600; background: var(--cream); color: var(--ink); border-color: var(--cream); }
+.card.payment button, .card.ft button, .card.task button, .card.answer button { color: var(--ink); border-color: rgba(21, 19, 15, .3); }
+.card.payment button.primary, .card.ft button.primary, .card.task button.primary, .card.answer button.primary {
+  background: var(--ink); color: var(--cream); border-color: var(--ink); }
+
+/* Focus is the whole interaction model on a D-pad: coral, everywhere, unmistakable. */
+button:focus, .item:focus,
+.card.payment button:focus, .card.ft button:focus, .card.task button:focus, .card.answer button:focus {
+  background: var(--coral); border-color: var(--coral); color: var(--ink);
+  box-shadow: 0 0 0 4px rgba(236, 106, 99, .35); transform: scale(1.02); }
+
+/* Lists: each row is a small pastel card, cycling colors like the phone's stacked lists. */
+.list { display: flex; flex-direction: column; gap: 9px; overflow: hidden; }
+.item { border-radius: 24px; border: 0; color: var(--ink); display: flex; flex-direction: column; gap: 2px;
+  font-weight: 600; font-size: 24px; padding: 13px 20px; }
+.item small { font-size: 17px; font-weight: 500; color: var(--ink-soft); }
+.list .item:nth-child(4n + 1) { background: var(--sky); }
+.list .item:nth-child(4n + 2) { background: var(--mint); }
+.list .item:nth-child(4n + 3) { background: var(--rose); }
+.list .item:nth-child(4n + 4) { background: var(--butter); }
+.list .item:focus { background: var(--coral); box-shadow: 0 0 0 4px rgba(236, 106, 99, .35); transform: translateX(6px); }
+
+/* Home's bottom grid. */
+.nav { margin-top: auto; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.grid button { text-align: center; padding: 9px 14px; font-size: 21px; }
 .grid .span2 { grid-column: span 2; }
-.hint { font-size: 19px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.grid { gap: 8px; }
-.grid button { padding: 9px 14px; font-size: 22px; }
+
+/* One orchestrated entrance (cards rise in order), nothing looping: the panel refreshes at 30 Hz. */
+@media (prefers-reduced-motion: no-preference) {
+  .card, .item { animation: rise .32s cubic-bezier(.2, .8, .2, 1) both; }
+  .list .item:nth-child(2) { animation-delay: .04s; }
+  .list .item:nth-child(3) { animation-delay: .08s; }
+  .list .item:nth-child(4) { animation-delay: .12s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(16px); } }
+}

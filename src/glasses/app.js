@@ -8,7 +8,7 @@ window.addEventListener('unhandledrejection', e => report('promise: ' + (e.reaso
 report('loaded ' + innerWidth + 'x' + innerHeight + ' ' + navigator.userAgent);
 
 // Kept dependency-free: well under the 300 KB first-load budget, one request.
-const STAR = '<svg viewBox="0 0 100 100" aria-hidden="true"><path fill="#F7D27E" d="M50 2 C53 38 62 47 98 50 C62 53 53 62 50 98 C47 62 38 53 2 50 C38 47 47 38 50 2Z"/></svg>';
+const STAR = '<svg viewBox="0 0 100 100" aria-hidden="true"><path fill="#F7D27E" d="M50 0 C51.5 40 60 48.5 100 50 C60 51.5 51.5 60 50 100 C48.5 60 40 51.5 0 50 C40 48.5 48.5 40 50 0Z"/><path fill="#F7D27E" opacity=".85" d="M50 26 C51 46 54 49 74 50 C54 51 51 54 50 74 C49 54 46 51 26 50 C46 49 49 46 50 26Z" transform="rotate(45 50 50)"/></svg>';
 const $app = document.getElementById('app');
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const usd = c => '$' + (c / 100).toFixed(2);

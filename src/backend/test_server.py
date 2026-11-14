@@ -39,3 +39,10 @@ def test_capture_activate_stats():
     assert len(os.listdir(f"{d}/frames")) == 1
     assert len(os.listdir(f"{d}/activation")) == 1
     assert len(os.listdir(f"{d}/audio")) == 1
+
+
+def test_followthrough_proxy_reports_when_down(monkeypatch):
+    # Nothing listens on this port: the glasses get a clear 502 with how to start it, not a hang.
+    monkeypatch.setattr(server, "FOLLOWTHROUGH_URL", "http://127.0.0.1:9")
+    r = TestClient(server.app).get("/ft/api/state")
+    assert r.status_code == 502 and "src/followthrough" in r.json()["detail"]

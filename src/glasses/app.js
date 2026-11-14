@@ -17,6 +17,15 @@ const ago = ts => { const m = Math.round((Date.now() / 1000 - ts) / 60); return 
 let state = { online: false, view: 'home', cards: [], tasks: [], things: [], payments: [], lastCard: 0,
               dismissed: new Set(), note: '', answer: null, asking: '' };
 
+// Extension points. Other files loaded after this one (src/glasses/followthrough.js) add screens,
+// data, and actions here instead of editing this file. See docs/FOLLOWTHROUGH-ON-GLASSES.md.
+const views = {};      // name -> () => html          (open with <button data-view="name">)
+const pollers = [];    // async () => void            (runs every 2 s; write results into state)
+const actions = {};    // data-act -> async dataset => void   (a pinch on <button data-act="...">)
+const heroes = [];     // () => html | null            (Home's big card; first non-null wins, after payments)
+const navTiles = [];   // () => html                   (extra buttons in Home's bottom grid)
+window.Scene = { state, views, pollers, actions, heroes, navTiles, api, esc, ago, render };
+
 async function api(path, method = 'GET', form) {
   const r = await fetch(path, form ? { method, body: new URLSearchParams(form) } : { method });
   if (!r.ok) { let d = ''; try { d = (await r.json()).detail; } catch {} throw new Error(d || 'HTTP ' + r.status); }
@@ -32,6 +41,7 @@ async function poll() {
     }
     [state.tasks, state.things, state.payments] = await Promise.all([api('/tasks'), api('/items'), api('/payments')]);
     state.online = true;
+    await Promise.all(pollers.map(p => p().catch(err => report('poller: ' + err.message))));
   } catch { state.online = false; }
   render();
 }
@@ -46,21 +56,24 @@ function spotlight() {
 
 function home() {
   const s = spotlight();
+  const ext = s?.kind === 'payment' ? null : heroes.map(f => f()).find(Boolean);
   let hero;
   if (state.answer) {
     hero = `<div class="card answer"><div class="eyebrow">${esc(state.answer.question)}</div>
       <div class="title">${esc(state.answer.answer)}</div>
       <div class="row"><button class="primary" data-act="clear-answer">OK</button><button data-view="ask">Ask more</button></div></div>`;
-  } else if (!s) {
-    hero = `<div class="card"><div class="eyebrow">All clear</div>
-      <div class="title">Scene is remembering</div>
-      <div class="body">Say “hey scene” to ask anything you've seen or heard.</div></div>`;
-  } else if (s.kind === 'payment') {
+  } else if (s?.kind === 'payment') {
     hero = `<div class="card payment"><div class="eyebrow">Needs you</div>
       <div class="big">${usd(s.pay.amount_cents)}</div>
       <div class="body">from ${esc(s.pay.counterparty || 'someone')} · ${esc(s.pay.memo)}</div>
       <div class="row"><button class="primary" data-act="approve" data-id="${s.pay.id}">Approve</button>
       <button data-act="reject" data-id="${s.pay.id}">Not now</button></div></div>`;
+  } else if (ext) {
+    hero = ext;
+  } else if (!s) {
+    hero = `<div class="card"><div class="eyebrow">All clear</div>
+      <div class="title">Scene is remembering</div>
+      <div class="body">Say “hey scene” to ask anything you've seen or heard.</div></div>`;
   } else if (s.kind === 'task') {
     hero = `<div class="card task"><div class="eyebrow">New task</div>
       <div class="title">${esc(s.card.body)}</div>
@@ -74,7 +87,8 @@ function home() {
   const approved = state.payments.find(p => p.status === 'approved');
   return hero + (approved ? `<div class="body">Waiting on ${usd(approved.amount_cents)} from ${esc(approved.counterparty)}: show the QR on your phone.</div>` : '') +
     `<div class="grid nav"><button data-view="ask">Ask</button><button data-view="recent">Recent</button>
-      <button data-view="tasks">Tasks · ${state.tasks.length}</button><button data-view="things">Things · ${state.things.length}</button></div>`;
+      <button data-view="tasks">Tasks · ${state.tasks.length}</button><button data-view="things">Things · ${state.things.length}</button>
+      ${navTiles.map(f => f()).join('')}</div>`;
 }
 
 function tasks() {
@@ -116,7 +130,7 @@ function recent() {
 let lastHTML = '';
 function render() {
   const header = `<header>${STAR}<h1>Scene</h1><span class="status"><span class="dot ${state.online ? '' : 'off'}"></span>${state.online ? 'Live' : 'Offline'}</span></header>`;
-  const body = { home, tasks, things, ask, recent }[state.view]();
+  const body = ({ home, tasks, things, ask, recent, ...views }[state.view] || home)();
   const html = header + (state.note ? `<div class="body">${esc(state.note)}</div>` : '') + body;
   if (html === lastHTML) return;   // don't re-render (and steal focus) when nothing changed
   const key = el => (el?.dataset?.act || '') + (el?.dataset?.id || '') + (el?.dataset?.view || '') + (el?.dataset?.q || '');
@@ -134,6 +148,7 @@ $app.addEventListener('click', async e => {
   state.note = '';
   if (view) { state.view = view; render(); return; }
   try {
+    if (actions[act]) await actions[act](el.dataset);
     if (act === 'approve') { await api(`/payments/${id}/approve`, 'POST'); state.note = 'Requested. Show the QR on your phone.'; }
     if (act === 'reject') await api(`/payments/${id}/reject`, 'POST');
     if (act === 'done' && id) await api(`/tasks/${id}/done`, 'POST');
@@ -161,5 +176,8 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' || e.key === 'Backspace') { state.view = 'home'; render(); }
 });
 
-poll();
-setInterval(poll, 2000);   // one light poll, not an animation loop: fine for the 30 Hz panel
+// Start after every script has loaded, so extensions are registered before the first render.
+window.addEventListener('load', () => {
+  poll();
+  setInterval(poll, 2000);   // one light poll, not an animation loop: fine for the 30 Hz panel
+});

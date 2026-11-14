@@ -23,6 +23,8 @@ import time
 from collections import deque
 from pathlib import Path
 
+import httpx
+
 import models
 import payments
 import voice
@@ -30,6 +32,9 @@ import voice
 DATA_DIR = Path(os.environ.get("SCENE_DATA_DIR", Path(__file__).parent / "data"))
 ENABLED = bool(os.environ.get("GEMINI_API_KEY"))  # OpenAI optional: models.py falls back to Gemini
 
+# Optional: also feed what the glasses hear to Follow-Through (src/followthrough), which turns
+# commitments into calendar events / emails behind an approval. Off unless set, e.g. http://localhost:8002
+FOLLOWTHROUGH_URL = os.environ.get("FOLLOWTHROUGH_FORWARD_URL", "").rstrip("/")
 FRAME_EVERY_S = float(os.environ.get("SCENE_FRAME_EVERY_S", "0"))  # 0 = every frame (Hydrogen is fast)
 MIN_SIM = float(os.environ.get("SCENE_MIN_SIM", "0.25"))  # weaker hits never reach the answer model (lesson:
                                                          # an unrelated memory is worse than none). Tune live.
@@ -228,6 +233,7 @@ def flush_transcript() -> None:
     _last_extract = time.time()
     receipts = [r["text"] for r in rows(
         "SELECT text FROM memories WHERE kind='event' AND text LIKE 'Receipt:%' AND ts > ?", time.time() - 3600)]
+    forward_to_followthrough(text)
     out = models.extract_tasks(text, receipts)
     for t in out.get("tasks", []):
         if not quoted(t, text):
@@ -257,6 +263,19 @@ def flush_transcript() -> None:
         if hits and hits[0][0] >= DONE_MATCH:
             set_done(hits[0][1]["id"])
             print(f"memory: closed task {hits[0][1]['text']!r} ({hits[0][0]:.2f})", flush=True)
+
+
+def forward_to_followthrough(text: str) -> None:
+    """Append the last ~30 s of conversation to Follow-Through and let it look for commitments.
+    Never blocks Scene's own extraction: any failure is one log line."""
+    if not FOLLOWTHROUGH_URL:
+        return
+    try:
+        with httpx.Client(timeout=60) as c:
+            c.post(f"{FOLLOWTHROUGH_URL}/api/transcript", json={"text": text}).raise_for_status()
+            c.post(f"{FOLLOWTHROUGH_URL}/api/run").raise_for_status()
+    except Exception as e:
+        print(f"memory: Follow-Through forward failed: {e!r}", flush=True)
 
 
 def set_done(task_id: int) -> bool:

@@ -26,7 +26,8 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+import httpx
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 
@@ -206,7 +207,8 @@ async def log_visitors(request: Request, call_next):
     """Record every non-API visitor (path + user agent): shows whether the glasses fetch anything at all."""
     response = await call_next(request)
     path = request.url.path
-    if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log", "/frames")):
+    if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log",
+                            "/frames", "/ft/")):
         with open(DATA_DIR / "glasses.log", "a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {request.method} {path} -> {response.status_code} "
                     f"ua={request.headers.get('user-agent', '?')[:160]}\n")
@@ -218,6 +220,24 @@ async def root():
     """Opening the bare tunnel URL lands on the glasses app."""
     from fastapi.responses import RedirectResponse
     return RedirectResponse("/glasses/")
+
+
+# Follow-Through (src/followthrough, its own server on :8002) behind the same origin, so the glasses
+# app reaches it through the one tunnel URL: fetch('/ft/api/state') -> http://localhost:8002/api/state.
+FOLLOWTHROUGH_URL = os.environ.get("FOLLOWTHROUGH_URL", "http://localhost:8002").rstrip("/")
+_ft = httpx.AsyncClient(timeout=60)
+
+
+@app.api_route("/ft/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
+async def followthrough_proxy(path: str, request: Request):
+    try:
+        r = await _ft.request(request.method, f"{FOLLOWTHROUGH_URL}/{path}", params=request.query_params,
+                              content=await request.body(),
+                              headers={"content-type": request.headers.get("content-type", "application/json")})
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Follow-Through isn't reachable at {FOLLOWTHROUGH_URL} ({type(e).__name__}). "
+                                 "Start it: cd src/followthrough && ./run.sh")
+    return Response(r.content, status_code=r.status_code, media_type=r.headers.get("content-type"))
 
 
 @app.get("/favicon.ico")

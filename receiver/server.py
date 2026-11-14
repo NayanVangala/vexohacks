@@ -1,0 +1,241 @@
+"""Minimal receiver for the Vexo bridge.
+
+Exists only to prove data arrives: saves every frame and WAV the phone sends,
+counts them, and reports the counts. No processing, no models, no storage
+beyond plain files.
+
+Wire format is the Findr bridge's (BackendClient.swift):
+  POST /capture   multipart, exactly one file part: `photo` (JPEG) or `audio` (WAV),
+                  optional form field `source` ("activation" for the Activate photo)
+  POST /activate  empty body
+  GET  /stats     JSON counters
+
+Memory (memory.py, needs GEMINI_API_KEY; OPENAI_API_KEY optional; without Gemini the receiver just saves files):
+  POST /ask              form `text` or `audio` (WAV) -> answer card
+  GET  /tasks            open tasks        POST /tasks/{id}/done
+  GET  /items            last place of each object
+  GET  /feed?after=N     cards for the glasses (answers, new tasks, payments to approve)
+  GET  /payments ...     see payments.py; approve is the human-in-the-loop gate
+  GET  /frames/<name>    saved frames (thumbnails; set PUBLIC_BASE_URL to an HTTPS tunnel for the display)
+
+Run:  .venv/bin/python server.py        (0.0.0.0:8001, the bridge's default port)
+"""
+
+import os
+import threading
+import time
+from pathlib import Path
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from fastapi.staticfiles import StaticFiles
+
+import memory
+import models
+import payments
+
+DATA_DIR = Path(os.environ.get("VEXO_DATA_DIR", Path(__file__).parent / "data"))
+PORT = int(os.environ.get("PORT", "8001"))
+
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")  # HTTPS tunnel; display images need HTTPS
+
+app = FastAPI(title="vexo-bridge receiver")
+(DATA_DIR / "frames").mkdir(parents=True, exist_ok=True)
+app.mount("/frames", StaticFiles(directory=DATA_DIR / "frames"), name="frames")
+
+_lock = threading.Lock()
+_started = time.time()
+_stats = {
+    "frames": 0,
+    "activation_photos": 0,
+    "audio_chunks": 0,
+    "activations": 0,
+    "rejected": 0,
+    "bytes": 0,
+    "last_frame_at": None,
+    "last_audio_at": None,
+}
+
+
+def _is_jpeg(b: bytes) -> bool:
+    return b[:3] == b"\xff\xd8\xff"
+
+
+def _is_wav(b: bytes) -> bool:
+    return len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WAVE"
+
+
+def _save(kind: str, ext: str, data: bytes) -> Path:
+    # Server-side names only: the client's filename is untrusted input.
+    d = DATA_DIR / kind
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{time.time_ns()}.{ext}"
+    path.write_bytes(data)
+    return path
+
+
+def _reject(msg: str):
+    with _lock:
+        _stats["rejected"] += 1
+    print(f"REJECT {msg}", flush=True)
+    raise HTTPException(status_code=415, detail=msg)
+
+
+@app.post("/capture")
+async def capture(
+    photo: UploadFile | None = File(None),
+    audio: UploadFile | None = File(None),
+    source: str | None = Form(None),
+):
+    if (photo is None) == (audio is None):
+        raise HTTPException(status_code=422, detail="send exactly one of `photo` or `audio`")
+
+    now = time.time()
+    if photo is not None:
+        data = await photo.read()
+        if not _is_jpeg(data):
+            _reject(f"photo is not JPEG ({len(data)} B)")
+        activation = source == "activation"
+        path = _save("activation" if activation else "frames", "jpg", data)
+        with _lock:
+            _stats["activation_photos" if activation else "frames"] += 1
+            _stats["bytes"] += len(data)
+            _stats["last_frame_at"] = now
+            n = _stats["activation_photos" if activation else "frames"]
+        print(f"{'ACTIVATION PHOTO' if activation else 'frame'} #{n} {len(data)} B -> {path.name}", flush=True)
+        if not activation:
+            memory.on_frame(path)
+        return {"saved": path.name, "kind": "activation" if activation else "frame"}
+
+    data = await audio.read()
+    if not _is_wav(data):
+        _reject(f"audio is not WAV ({len(data)} B)")
+    path = _save("audio", "wav", data)
+    with _lock:
+        _stats["audio_chunks"] += 1
+        _stats["bytes"] += len(data)
+        _stats["last_audio_at"] = now
+        n = _stats["audio_chunks"]
+    print(f"audio #{n} {len(data)} B -> {path.name}", flush=True)
+    memory.on_audio(path)
+    return {"saved": path.name, "kind": "audio"}
+
+
+@app.post("/activate")
+async def activate():
+    with _lock:
+        _stats["activations"] += 1
+        n = _stats["activations"]
+    print(f"ACTIVATE #{n}", flush=True)
+    return {"activations": n}
+
+
+def _frame_url(frame: str | None) -> str | None:
+    return f"{PUBLIC_BASE_URL}/frames/{frame}" if frame and PUBLIC_BASE_URL else None
+
+
+@app.post("/ask")
+async def ask(text: str | None = Form(None), audio: UploadFile | None = File(None)):
+    if audio is not None:
+        data = await audio.read()
+        if not _is_wav(data):
+            _reject(f"audio is not WAV ({len(data)} B)")
+        text = await run_in_threadpool(models.transcribe, data)
+    if not text or not text.strip():
+        raise HTTPException(status_code=422, detail="send `text` or `audio` with speech in it")
+    out = await run_in_threadpool(memory.ask, text.strip())  # blocking model calls off the event loop
+    print(f"ASK {out['question']!r} -> {out['answer']!r}", flush=True)
+    return {**out, "image_url": _frame_url(out["frame"])}
+
+
+@app.get("/tasks")
+async def tasks():
+    return memory.open_tasks()
+
+
+@app.post("/tasks/{task_id}/done")
+async def task_done(task_id: int):
+    if not memory.set_done(task_id):
+        raise HTTPException(status_code=404, detail="no such task")
+    return {"done": task_id}
+
+
+@app.get("/payments")
+async def payments_pending():
+    return payments.pending()
+
+
+@app.get("/payments/{pid}")
+async def payment_status(pid: int):
+    try:
+        return await run_in_threadpool(payments.refresh, pid)
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/payments/{pid}/approve")
+async def payment_approve(pid: int):
+    """Called only by the glasses' Approve button: the human-in-the-loop gate."""
+    try:
+        return await run_in_threadpool(payments.approve, pid)
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/payments/{pid}/reject")
+async def payment_reject(pid: int):
+    try:
+        payments.reject(pid)
+    except payments.PaymentError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"rejected": pid}
+
+
+@app.get("/feed")
+async def feed(after: int = 0):
+    return [{**c, "image_url": _frame_url(c["frame"])} for c in memory.cards_after(after)]
+
+
+@app.get("/items")
+async def items():
+    return [{**i, "image_url": _frame_url(i["frame"])} for i in memory.items()]
+
+
+@app.get("/stats")
+async def stats():
+    now = time.time()
+    with _lock:
+        s = dict(_stats)
+    for k in ("last_frame_at", "last_audio_at"):
+        s[k.replace("_at", "_age_s")] = None if s[k] is None else round(now - s[k], 1)
+    s["uptime_s"] = round(now - _started, 1)
+    s["data_dir"] = str(DATA_DIR)
+    return s
+
+
+def _check_models() -> None:
+    """Say loudly, at startup, which keys and models are live. A wrong model name otherwise
+    shows up only as one 404 per frame in the log."""
+    for k in ("GEMINI_API_KEY", "OPENAI_API_KEY", "STRIPE_SECRET_KEY", "ELEVENLABS_API_KEY"):
+        print(f"  {k:20} {'set' if os.environ.get(k) else 'MISSING'}", flush=True)
+    if not memory.ENABLED:
+        print("  memory OFF: needs GEMINI_API_KEY. Receiver only saves files.", flush=True)
+        return
+    try:
+        names = models.gemini_models()
+    except Exception as e:
+        print(f"  !! could not list Gemini models: {e!r}", flush=True)
+        return
+    print(f"  gemini-4 models on this key: {[n for n in names if n.startswith('gemini-4')] or 'none'}", flush=True)
+    for var, name in (("GEMINI_MODEL", models.GEMINI_MODEL), ("GEMINI_EMBED_MODEL", models.GEMINI_EMBED_MODEL)):
+        if name not in names:
+            print(f"  !! {var}={name} is NOT available on this key. Pick one from the list.", flush=True)
+    print(f"  brain: {'OpenAI ' + models.OPENAI_CHAT_MODEL if os.environ.get('OPENAI_API_KEY') else 'Gemini ' + models.GEMINI_TEXT_MODEL}", flush=True)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    _check_models()
+
+    uvicorn.run(app, host="0.0.0.0", port=PORT)

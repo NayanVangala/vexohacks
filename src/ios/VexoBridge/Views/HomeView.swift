@@ -17,6 +17,7 @@ import CoreImage.CIFilterBuiltins
 struct RootView: View {
     let controller: BridgeController
     @AppStorage("seenIntro") private var seenIntro = false
+    @AppStorage("appearance") private var appearance = "system"
     /// Launch with `-startTab glasses` (or tasks/things) to open on that tab: screenshots, demo takes.
     @State private var tab = UserDefaults.standard.string(forKey: "startTab") ?? "today"
 
@@ -37,8 +38,8 @@ struct RootView: View {
             ThingsView(store: store)
                 .tabItem { Label("Things", systemImage: "key.horizontal") }
                 .tag("things")
-            GlassesView(controller: controller)
-                .tabItem { Label("Glasses", systemImage: "eyeglasses") }
+            GlassesView(controller: controller, replayIntro: { seenIntro = false })
+                .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag("glasses")
         }
         .overlay(alignment: .top) {
@@ -53,12 +54,13 @@ struct RootView: View {
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: store.notice)
         .tint(Theme.ink)
-        .preferredColorScheme(.light)   // one palette for now; dark comes with the real theme
+        .preferredColorScheme(Appearance.scheme(appearance))
         // Pops on approve, from the phone OR a pinch on the glasses: the other
         // person scans this to pay.
         .sheet(item: $store.checkout) { _ in CheckoutSheet(store: store) }
         .fullScreenCover(isPresented: Binding(get: { !seenIntro }, set: { seenIntro = !$0 })) {
             IntroView { seenIntro = true }
+                .environment(\.colorScheme, .light)   // the coral welcome is designed in one light
         }
     }
 }

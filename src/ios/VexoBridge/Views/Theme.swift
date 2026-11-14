@@ -11,18 +11,19 @@ import SwiftUI
 
 enum Theme {
     // Surfaces
-    static let canvas    = Color(hex: 0xE6E3D8)   // warm greige page
-    static let card      = Color(hex: 0xFFFFFF)
-    static let butter    = Color(hex: 0xF7E1AE)
-    static let mint      = Color(hex: 0xC4E9A8)
-    static let rose      = Color(hex: 0xF0AEC4)
-    static let sky       = Color(hex: 0xEEF1FA)
+    // Each color has a dark twin: the same pastel family, deepened so cream ink reads on it.
+    static let canvas    = Color(light: 0xE6E3D8, dark: 0x14130F)   // warm greige page / warm night
+    static let card      = Color(light: 0xFFFFFF, dark: 0x25231E)
+    static let butter    = Color(light: 0xF7E1AE, dark: 0x4A3D1E)
+    static let mint      = Color(light: 0xC4E9A8, dark: 0x2C4423)
+    static let rose      = Color(light: 0xF0AEC4, dark: 0x4D2836)
+    static let sky       = Color(light: 0xEEF1FA, dark: 0x262B3B)
     static let pastels   = [sky, mint, rose, butter]
 
     // Ink + accents
-    static let ink       = Color(hex: 0x15130F)
-    static let inkSoft   = Color(hex: 0x15130F).opacity(0.55)
-    static let inkFaint  = Color(hex: 0x15130F).opacity(0.3)
+    static let ink       = Color(light: 0x15130F, dark: 0xF6EFE2)
+    static let inkSoft   = ink.opacity(0.6)
+    static let inkFaint  = ink.opacity(0.32)
     static let action    = Color(hex: 0xEC6A63)   // coral: the one thing to press
     static let star      = Color(hex: 0xF5CF7F)
     static let chart     = Color(hex: 0x7BD35A)
@@ -42,6 +43,22 @@ extension Color {
         self.init(red: Double((hex >> 16) & 0xFF) / 255,
                   green: Double((hex >> 8) & 0xFF) / 255,
                   blue: Double(hex & 0xFF) / 255)
+    }
+
+    /// Follows the app's light/dark appearance (Settings > Appearance).
+    init(light: UInt32, dark: UInt32) {
+        func ui(_ h: UInt32) -> UIColor {
+            UIColor(red: CGFloat((h >> 16) & 0xFF) / 255, green: CGFloat((h >> 8) & 0xFF) / 255,
+                    blue: CGFloat(h & 0xFF) / 255, alpha: 1)
+        }
+        self.init(uiColor: UIColor { $0.userInterfaceStyle == .dark ? ui(dark) : ui(light) })
+    }
+}
+
+/// Settings > Appearance, stored as "system" | "light" | "dark".
+enum Appearance {
+    static func scheme(_ raw: String) -> ColorScheme? {
+        raw == "light" ? .light : raw == "dark" ? .dark : nil
     }
 }
 

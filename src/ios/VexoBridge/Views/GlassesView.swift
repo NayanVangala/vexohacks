@@ -13,6 +13,7 @@ import MWDATCore
 
 struct GlassesView: View {
     let controller: BridgeController
+    var replayIntro: () -> Void = {}
     @State private var state = BridgeState.shared
     @State private var url = ""
     @State private var busy = false
@@ -26,7 +27,7 @@ struct GlassesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Glasses").font(.largeTitle.weight(.medium)).foregroundStyle(Theme.ink)
+                    Text("Settings").font(.largeTitle.weight(.medium)).foregroundStyle(Theme.ink)
                     Text(summary).font(.subheadline).foregroundStyle(Theme.inkSoft)
                 }
                 .padding(.top, 12)
@@ -37,6 +38,8 @@ struct GlassesView: View {
                     StackCard(color: Theme.sky, index: 2) { laptop }.scrollDepth()
                     startButton.rise(3)
                 }
+
+                PreferencesSection(store: store, micLocked: state.isRunning, replayIntro: replayIntro)
 
                 diagnostics
             }
@@ -322,15 +325,6 @@ struct GlassesView: View {
                 .disabled(state.isRunning)
                 #endif
 
-                Toggle("Use iPhone microphone", isOn: Binding(
-                    get: { GlassesAudioRecorder.usePhoneMic },
-                    set: { UserDefaults.standard.set($0, forKey: "usePhoneMic") }))
-                    .font(.subheadline)
-                    .tint(Theme.action)
-                    .disabled(state.isRunning)
-                Text("Recommended: the glasses mic goes silent while the camera streams. Takes effect on Start.")
-                    .font(.caption).foregroundStyle(Theme.inkSoft)
-
                 HStack {
                     Text("Newest first").font(.caption).foregroundStyle(Theme.inkSoft)
                     Spacer()
@@ -350,4 +344,96 @@ struct GlassesView: View {
         }
         .padding(.top, 8)
     }
+}
+
+// MARK: - Preferences: how the app looks and how Scene talks back
+
+/// Mirrors the laptop's /settings (the same switches the glasses' Settings screen flips),
+/// plus this phone's own appearance and microphone choice.
+private struct PreferencesSection: View {
+    let store: MemoryStore
+    let micLocked: Bool
+    let replayIntro: () -> Void
+    @AppStorage("appearance") private var appearance = "system"
+    @AppStorage("usePhoneMic") private var usePhoneMic = true
+    @State private var remote: SceneSettings?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Eyebrow("Preferences").padding(.top, 10)
+            VStack(alignment: .leading, spacing: 20) {
+                row("Appearance", "How this app looks") {
+                    picker($appearance, [("system", "Auto"), ("light", "Light"), ("dark", "Dark")])
+                }
+                if let r = remote {
+                    row("Scene tells you with", "Cards on the glasses, a voice in your ear, or both") {
+                        picker(Binding(get: { r.output ?? "both" }, set: { save(["output": $0]) }),
+                               [("cards", "Cards"), ("voice", "Voice"), ("both", "Both")])
+                    }
+                    row("Voice plays on", "Where you hear Scene's answers") {
+                        picker(Binding(get: { r.speakOn }, set: { save(["speak_on": $0]) }),
+                               [("glasses", "Glasses"), ("laptop", "Laptop"), ("both", "Both")])
+                    }
+                    toggle("Remembering", "Off pauses everything Scene sees and hears",
+                           Binding(get: { !r.paused }, set: { save(["paused": $0 ? "false" : "true"]) }))
+                } else {
+                    Text("Connect to the laptop to change how Scene answers.")
+                        .font(.subheadline).foregroundStyle(Theme.inkSoft)
+                }
+                toggle("Use iPhone microphone", "Clearer voice: the glasses mic drops to phone-call quality. Takes effect on Start.",
+                       $usePhoneMic)
+                    .disabled(micLocked)
+                Button(action: replayIntro) {
+                    Label("Replay the welcome", systemImage: "sparkle").font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.ink)
+                }
+                .buttonStyle(.squish)
+            }
+            .padding(22)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        }
+        .task { remote = try? await store.backend.get("/settings") }
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: remote)
+    }
+
+    private func save(_ form: [String: String]) {
+        Task {
+            if let r: SceneSettings = try? await store.backend.post("/settings", form: form) { remote = r }
+        }
+    }
+
+    private func row(_ title: String, _ detail: String, @ViewBuilder control: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline).foregroundStyle(Theme.ink)
+                Text(detail).font(.caption).foregroundStyle(Theme.inkSoft)
+            }
+            control()
+        }
+    }
+
+    private func toggle(_ title: String, _ detail: String, _ on: Binding<Bool>) -> some View {
+        Toggle(isOn: on) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline).foregroundStyle(Theme.ink)
+                Text(detail).font(.caption).foregroundStyle(Theme.inkSoft)
+            }
+        }
+        .tint(Theme.action)
+    }
+
+    private func picker(_ value: Binding<String>, _ options: [(String, String)]) -> some View {
+        Picker("", selection: value) {
+            ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+    }
+}
+
+struct SceneSettings: Decodable, Equatable {
+    let output: String?
+    let speakOn: String
+    let paused: Bool
 }

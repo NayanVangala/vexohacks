@@ -14,6 +14,9 @@ class Config:
     executor_token: str      # EXECUTOR_TOKEN, shared secret checked by the Apps Script
     email_to: str            # DEMO_EMAIL_TO, every email goes here no matter what the model says
     calendar_account: str    # CALENDAR_ACCOUNT, only shown in the UI; the Apps Script uses its own default calendar
+    eleven_key: str          # ELEVENLABS_API_KEY, optional. Without it the dashboard speaks with the browser voice
+    eleven_voice: str        # ELEVENLABS_VOICE_ID, which voice speaks (pick one in your ElevenLabs voice library)
+    eleven_model: str        # ELEVENLABS_MODEL, text to speech model (config, not hardcoded)
     data_dir: str            # FOLLOWTHROUGH_DATA, where state.json is saved
 
 
@@ -28,5 +31,8 @@ def get_config() -> Config:
         executor_token=os.environ.get("EXECUTOR_TOKEN", "").strip(),
         email_to=os.environ.get("DEMO_EMAIL_TO", "ultrasrijucat970@gmail.com").strip(),
         calendar_account=os.environ.get("CALENDAR_ACCOUNT", "srijansaha.work@gmail.com").strip(),
+        eleven_key=os.environ.get("ELEVENLABS_API_KEY", "").strip(),
+        eleven_voice=os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM").strip(),
+        eleven_model=os.environ.get("ELEVENLABS_MODEL", "eleven_flash_v2_5").strip(),
         data_dir=os.environ.get("FOLLOWTHROUGH_DATA", "data"),
     )

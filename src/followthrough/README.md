@@ -39,6 +39,17 @@ Without a key, only the staged demo works ("Load demo"). Everything from the dem
 | DEMO_EMAIL_TO | ultrasrijucat970@gmail.com | Every email goes here, whatever the model says |
 | CALENDAR_ACCOUNT | srijansaha.work@gmail.com | Shown in the UI and used for draft links |
 
+## Voice approval (ElevenLabs)
+After "Find commitments", press "Ask me out loud". For each ready item the dashboard speaks one short question
+("Want me to put Demo sync with Nayan on your calendar for Sunday at 10 AM?"), listens, and sends what it heard to
+`POST /api/items/{id}/voice`. Only a clear yes approves that one item and a clear no dismisses it. A mumble,
+silence, or "yes no" changes nothing. The Yes, No and Skip buttons always work, even mid-sentence.
+- Add `ELEVENLABS_API_KEY` to `.env` to use ElevenLabs. Pick the voice in your ElevenLabs voice library and put its id in
+  `ELEVENLABS_VOICE_ID`. The model is `ELEVENLABS_MODEL`.
+- With no key, the question is spoken by the browser voice instead (the top of the voice bar says which).
+- Listening uses the browser speech recognition (Chrome, Safari). Phone browsers need https for the microphone,
+  so use the tunnel link. Without it the buttons still work.
+
 ## Real email and calendar (the executor)
 
 `followthrough/apps_script/Code.gs` is a Google Apps Script web app. It runs as the account that deploys it.
@@ -72,6 +83,11 @@ The dashboard is a web page sized for phones. On the phone, open `http://<comput
 
 `python3 -m pytest followthrough/tests` runs 29 tests with a fake model and mocked OpenAI and executor calls. No key, no network.
 
+## Calendar titles
+Every event gets a specific title ("Demo sync with Nayan") and a one sentence description, then the exact words heard
+and the time. If the model leaves the title empty or generic ("Meeting", "Untitled"), a title is built from the
+person and the quote, so nothing is ever created as Untitled.
+
 ## What is verified and what is not
 
 Verified (tests, plus a browser run of the staged demo):
@@ -81,9 +97,12 @@ Verified (tests, plus a browser run of the staged demo):
 - Approve rules: needs-review and already-handled items are refused, double approve is refused, failed executor shows "failed" not "done", no executor shows "drafted" not "sent".
 - State survives a restart. The OpenAI request is built with the strict schema and the key and model come from the environment (checked against a mocked client).
 - Dashboard builds, runs in Chrome at desktop and phone sizes, shows the no-key error clearly.
+- Calendar payload carries a specific title and a short description (mocked executor). Blank or generic titles are replaced.
+- Voice: yes/no parsing is cautious (tests), the ElevenLabs request is built correctly and cached (mocked), voice yes approves only the asked item, voice no dismisses, unverified items cannot be voice approved. In Chrome the voice bar asks each item and Yes and No buttons work, with the browser-voice fallback.
 
 Not verified (needs your key, your Google account, or real audio):
 - A real OpenAI call: output quality of the prompt on real conversations, whether the default model name `gpt-4o` is the best choice, and real Whisper segments.
-- The Apps Script executor: the code was written but never run, so a real email or calendar event has not been created.
+- The Apps Script executor is deployed and answers (wrong token is refused, right token is accepted), but no real event or email has been created through the app yet.
+- ElevenLabs: no real call was made (no key here), so the voice id, model name and how the voice sounds are untested. Spoken yes/no recognition by microphone is untested; only the buttons were exercised.
 - Recording and audio upload in a browser, and the page on an actual iPhone.
 - Pulling audio from Nayan's glasses receiver. Nothing here talks to it yet. Today audio comes from the dashboard (record, upload) or pasted text.

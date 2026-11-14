@@ -248,3 +248,96 @@ def test_retry_only_for_failed(client, monkeypatch):
     monkeypatch.setenv("EXECUTOR_URL", "http://127.0.0.1:9/none")              # unreachable executor
     assert client.post(f"/api/items/{eid}/approve").json()["status"] == "failed"
     assert client.post(f"/api/items/{eid}/retry").json()["status"] == "pending"
+
+
+# ---------- calendar titles and descriptions ----------
+def test_calendar_event_has_specific_title_and_short_description(monkeypatch):
+    seen = {}
+    def handler(req):
+        seen.update(json.loads(req.content)); return httpx.Response(200, json={"ok": True, "did": "ok"})
+    execute(_item("calendar"), _cfg(monkeypatch), [], httpx.Client(transport=httpx.MockTransport(handler)))
+    assert seen["title"] == "Demo sync with Nayan"
+    assert seen["details"].startswith("Thirty minute sync with Nayan")
+    assert 'Heard: "tomorrow at ten for thirty minutes"' in seen["details"]
+
+@pytest.mark.parametrize("bad", ["", "Untitled", "Meeting", "  event. "])
+def test_blank_or_generic_title_is_never_untitled(bad):
+    raw = {"action": "calendar", "title": bad, "counterpart": "Nayan", "quote": "x", "summary": ""}
+    assert agent.good_title(raw) == "Meeting with Nayan"
+    raw["counterpart"] = ""
+    raw["quote"] = "let's sync on the demo script tomorrow at ten"
+    assert agent.good_title(raw).lower().startswith("let's sync on the demo")
+
+def test_empty_summary_is_filled_in():
+    assert agent.good_summary({"counterpart": "Nayan"}, "Demo sync with Nayan") == "Demo sync with Nayan (Nayan)."
+
+
+# ---------- voice approval ----------
+from followthrough import voice
+
+@pytest.mark.parametrize("heard,want", [
+    ("yes", "yes"), ("Yeah, go ahead.", "yes"), ("yep sure", "yes"), ("No.", "no"), ("nope, skip it", "no"),
+    ("don't do it", "unclear"), ("yes no", "unclear"), ("", "unclear"), ("hmm maybe", "unclear"),
+    ("I know", "unclear"), ("nothing", "unclear"),
+])
+def test_parse_answer_is_cautious(heard, want):
+    assert voice.parse_answer(heard) == want
+
+def test_question_mentions_what_will_happen(monkeypatch):
+    monkeypatch.setenv("WEARER_NAME", "Srijan Saha")
+    q = voice.question_for(_item("calendar"), get_config())
+    assert q.startswith("Hey Srijan,") and "calendar" in q and "Say yes or no" not in q
+    assert "email" in voice.question_for(_item("email"), get_config())
+
+def test_speak_calls_elevenlabs_and_caches(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k"); voice._cache.clear()
+    calls = []
+    def handler(req):
+        calls.append(req); return httpx.Response(200, content=b"MP3DATA")
+    c = httpx.Client(transport=httpx.MockTransport(handler))
+    assert voice.speak("hi", get_config(), c) == b"MP3DATA"
+    assert voice.speak("hi", get_config(), c) == b"MP3DATA" and len(calls) == 1
+    req = calls[0]
+    assert req.headers["xi-api-key"] == "k" and "/v1/text-to-speech/" in str(req.url)
+    assert json.loads(req.content)["text"] == "hi" and json.loads(req.content)["model_id"]
+
+def test_speak_without_key_raises(monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        voice.speak("hi", get_config())
+
+def test_voice_route_yes_approves_only_on_clear_yes(client):
+    client.post("/api/demo/load"); client.post("/api/run")
+    items = client.get("/api/state").json()["items"]
+    todo = next(i for i in items if i["action"] == "todo")
+    r = client.post(f"/api/items/{todo['id']}/voice", json={"heard": "hmm maybe later"}).json()
+    assert r["answer"] == "unclear" and r["item"]["status"] == "pending"
+    r = client.post(f"/api/items/{todo['id']}/voice", json={"heard": "yes please"}).json()
+    assert r["answer"] == "yes" and r["item"]["status"] == "done"
+    assert client.post(f"/api/items/{todo['id']}/voice", json={"heard": "yes"}).status_code == 409
+
+def test_voice_route_no_dismisses(client):
+    client.post("/api/demo/load"); client.post("/api/run")
+    cal = next(i for i in client.get("/api/state").json()["items"] if i["action"] == "calendar")
+    r = client.post(f"/api/items/{cal['id']}/voice", json={"heard": "no"}).json()
+    assert r["answer"] == "no" and r["item"]["status"] == "dismissed"
+
+def test_cannot_voice_approve_unverified_item(client):
+    client.post("/api/demo/load"); client.post("/api/run")
+    bad = next(i for i in client.get("/api/state").json()["items"] if i["status"] == "needs_review")
+    assert client.post(f"/api/items/{bad['id']}/voice", json={"heard": "yes"}).status_code == 409
+
+def test_speech_route_without_key_is_503_with_question_available(client, monkeypatch):
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    client.post("/api/demo/load"); client.post("/api/run")
+    it = client.get("/api/state").json()["items"][0]
+    assert client.get(f"/api/items/{it['id']}/speech").status_code == 503
+    assert "Nayan" in client.get(f"/api/items/{it['id']}/question").json()["text"]
+
+def test_speech_route_returns_audio(client, monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k"); voice._cache.clear()
+    monkeypatch.setattr(voice, "speak", lambda text, cfg, client=None: b"AUDIO")
+    client.post("/api/demo/load"); client.post("/api/run")
+    it = client.get("/api/state").json()["items"][0]
+    r = client.get(f"/api/items/{it['id']}/speech")
+    assert r.status_code == 200 and r.content == b"AUDIO" and r.headers["content-type"] == "audio/mpeg"

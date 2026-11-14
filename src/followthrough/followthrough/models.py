@@ -33,6 +33,7 @@ class Item(BaseModel):
     id: str                       # stable hash of the quote, so re-running does not duplicate
     action: Action
     title: str
+    summary: str = ""             # one short sentence: what this is for (used as the calendar description)
     owner: str = ""
     counterpart: str = ""
     quote: str                    # exact words from the transcript

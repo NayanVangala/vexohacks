@@ -63,7 +63,11 @@ claude/                    Claude Code + ruflo workspace state
 
 ## Run
 
-Receiver (laptop):
+**Quick start:** double-click `Start Vexo.command` on the laptop, open the Vexo app on the iPhone,
+tap **Start**. The receiver advertises itself over Bonjour (`_vexo._tcp`) and the app finds it,
+so there's no IP to type.
+
+Receiver by hand (laptop):
 
 ```bash
 cd receiver

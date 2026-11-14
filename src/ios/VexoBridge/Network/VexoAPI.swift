@@ -202,6 +202,18 @@ struct ActivityItem: Decodable, Identifiable, Sendable {
 }
 
 /// Follow-Through's state, just the parts the phone shows.
+/// An order from the dining agent, any stage (its /orders list): where it is and where to pick it up.
+struct OrderInfo: Decodable, Identifiable, Equatable, Sendable {
+    let id: Int
+    let placeName: String
+    let address: String
+    let status: String          // proposed | approved | paid | rejected
+    let stage: String           // awaiting_approval | awaiting_payment | received | preparing | ready | rejected
+    let totalCents: Int
+}
+
+struct OKReply: Decodable { let ok: Bool? }
+
 /// A commitment Follow-Through found in the conversation, in any state (its /api/state items).
 struct Promise: Decodable, Identifiable, Equatable {
     let id: String
@@ -263,6 +275,7 @@ final class MemoryStore {
     private(set) var inbox: [InboxItem] = []       // Needs you: Scene's /inbox + Follow-Through's pending promises
     private(set) var notes: [NoteSummary] = []
     private(set) var activity: [ActivityItem] = []
+    private(set) var orders: [OrderInfo] = []
     private(set) var promises: [Promise] = []      // Follow-through tab: every promise, any state
     private(set) var online = false
     private(set) var lastAnswer: AskResult?
@@ -380,6 +393,7 @@ final class MemoryStore {
         async let n: [NoteSummary] = backend.get("/notes?limit=10")
         async let a: [ActivityItem] = backend.get("/activity?limit=30")
         async let ft: FTState = backend.get("/ft/api/state")
+        async let od: [OrderInfo] = backend.get("/orders?limit=10")
         var items = (try? await ib) ?? inbox.filter { $0.type != "promise" }
         if let ft = try? await ft {   // Follow-Through is optional: missing just means no promises
             promises = ft.items.filter { $0.status != "dismissed" }
@@ -394,7 +408,10 @@ final class MemoryStore {
         inbox = items
         if let n = try? await n { notes = n }
         if let a = try? await a { activity = a }
+        if let od = try? await od { orders = od }
     }
+
+    func order(_ ref: String) -> OrderInfo? { orders.first { String($0.id) == ref } }
 
     /// Follow-through tab buttons: approve | dismiss | retry, straight to Follow-Through.
     func promise(_ id: String, _ verb: String) async {

@@ -40,6 +40,7 @@ struct GlassesView: View {
                 }
 
                 PreferencesSection(store: store, micLocked: state.isRunning, replayIntro: replayIntro)
+                ContactsSection(store: store)
 
                 diagnostics
             }

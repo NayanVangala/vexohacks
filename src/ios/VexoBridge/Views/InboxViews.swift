@@ -7,6 +7,7 @@
 //  describes each item's buttons, so new kinds of approval need no new phone code.
 //
 
+import MapKit
 import SwiftUI
 
 // MARK: - Needs you tab
@@ -59,7 +60,7 @@ enum InboxStyle {
     static func color(_ type: String) -> Color {
         switch type {
         case "payment", "order": Theme.butter
-        case "email": Theme.sky
+        case "email", "slack": Theme.sky
         case "event": Theme.mint
         case "promise", "question": Theme.rose
         default: Theme.sky
@@ -71,6 +72,7 @@ enum InboxStyle {
         case "payment": "Money you're owed"
         case "order": "Order"
         case "email": "Email draft"
+        case "slack": "Slack message"
         case "event": "Calendar"
         case "promise": "Promise you made"
         case "question": "Scene asks"
@@ -121,6 +123,9 @@ struct InboxCard: View {
                         .disabled(busy != nil)
                     }
                 }
+            }
+            if item.type == "order", let o = store.order(item.ref) {
+                OrderMap(order: o)
             }
             if let link = item.link, let url = store.backend.absolute(link) {
                 Button { openURL(url) } label: {
@@ -375,4 +380,162 @@ private struct PromiseCard: View {
 
 private extension String {
     var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+// MARK: - Orders: where to pick it up, on a map
+
+/// A small map of the pickup address with the kitchen's stage. Tap to open Apple Maps. Hidden when the
+/// address can't be found (the demo kitchen is simulated).
+struct OrderMap: View {
+    let order: OrderInfo
+    @State private var place: CLLocationCoordinate2D?
+    private static var cache: [String: CLLocationCoordinate2D] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let place {
+                Button { open(place) } label: {
+                    Map(initialPosition: .region(MKCoordinateRegion(center: place, latitudinalMeters: 700, longitudinalMeters: 700)),
+                        interactionModes: []) {
+                        Marker(order.placeName, coordinate: place).tint(Theme.action)
+                    }
+                    .frame(height: 130)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(alignment: .bottomTrailing) {
+                        Label("Open in Maps", systemImage: "arrow.up.right").font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(.regularMaterial, in: Capsule()).padding(8)
+                    }
+                }
+                .buttonStyle(.squish)
+                .accessibilityLabel("Open \(order.placeName) in Maps")
+            }
+            Text("\(stage) · \(order.address)").font(.footnote).foregroundStyle(Theme.inkSoft).lineLimit(2)
+        }
+        .task(id: order.address) { place = await Self.locate(order) }
+    }
+
+    private var stage: String {
+        switch order.stage {
+        case "awaiting_approval": "Waiting on your OK"
+        case "awaiting_payment": "Waiting on payment"
+        case "received": "Order received"
+        case "preparing": "Being made"
+        case "ready": "Ready for pickup"
+        default: order.stage.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private static func locate(_ o: OrderInfo) async -> CLLocationCoordinate2D? {
+        if let c = cache[o.address] { return c }
+        let q = o.address.localizedCaseInsensitiveContains(o.placeName) ? o.address : "\(o.placeName), \(o.address)"
+        guard let hit = try? await CLGeocoder().geocodeAddressString(q).first?.location?.coordinate else { return nil }
+        cache[o.address] = hit
+        return hit
+    }
+
+    private func open(_ c: CLLocationCoordinate2D) {
+        let item = MKMapItem(placemark: MKPlacemark(coordinate: c))
+        item.name = order.placeName
+        item.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving])
+    }
+}
+
+/// Orders already paid: kitchen stage and pickup map, until you collect it.
+struct OrdersSection: View {
+    let store: MemoryStore
+    private var live: [OrderInfo] { store.orders.filter { ["received", "preparing", "ready"].contains($0.stage) } }
+
+    var body: some View {
+        if !live.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Eyebrow("Your orders").padding(.top, 10)
+                ForEach(live) { o in
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(o.placeName).font(.title3.weight(.semibold)).foregroundStyle(Theme.ink)
+                        OrderMap(order: o)
+                    }
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.butter, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Contacts (who "email Maya" or "Slack Sam" can reach)
+
+struct ContactsSection: View {
+    let store: MemoryStore
+    @State private var book: [String: String] = [:]
+    @State private var adding = false
+    @State private var name = ""
+    @State private var email = ""
+    @State private var slack = ""
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Eyebrow("Contacts").padding(.top, 10)
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Scene only ever emails or Slacks people in this list, and nothing sends until you tap.")
+                    .font(.caption).foregroundStyle(Theme.inkSoft)
+                ForEach(book.keys.sorted(), id: \.self) { n in
+                    HStack {
+                        Text(n).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                        Spacer()
+                        Text(book[n] ?? "").font(.caption).foregroundStyle(Theme.inkSoft).lineLimit(1)
+                    }
+                }
+                if book.isEmpty { Text("No contacts yet.").font(.subheadline).foregroundStyle(Theme.inkSoft) }
+                if adding {
+                    field("Name", $name)
+                    field("Email", $email, keyboard: .emailAddress)
+                    field("Slack member ID (optional, U012ABCDEF)", $slack)
+                    if let error { Text(error).font(.caption).foregroundStyle(Theme.alert) }
+                    HStack(spacing: 10) {
+                        Button("Cancel") { adding = false; error = nil }
+                            .frame(maxWidth: .infinity).padding(.vertical, 12)
+                            .overlay(Capsule().stroke(Theme.ink.opacity(0.25)))
+                        Button("Save") { Task { await save() } }
+                            .frame(maxWidth: .infinity).padding(.vertical, 12)
+                            .foregroundStyle(Theme.card).background(Theme.ink, in: Capsule())
+                    }
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink).buttonStyle(.squish)
+                } else {
+                    Button { adding = true } label: {
+                        Label("Add contact", systemImage: "plus").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                    }
+                    .buttonStyle(.squish)
+                }
+            }
+            .padding(22)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        }
+        .task { await load() }
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: adding)
+    }
+
+    private func field(_ title: String, _ text: Binding<String>, keyboard: UIKeyboardType = .default) -> some View {
+        TextField(title, text: text)
+            .keyboardType(keyboard).textInputAutocapitalization(keyboard == .default ? .words : .never).autocorrectionDisabled()
+            .padding(14).foregroundStyle(Theme.ink)
+            .background(Theme.canvas, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func load() async { if let b: [String: String] = try? await store.backend.get("/contacts") { book = b } }
+
+    private func save() async {
+        var form = ["name": name, "email": email]
+        if !slack.isEmpty { form["slack"] = slack }
+        do {
+            let _: OKReply = try await store.backend.post("/contacts", form: form)
+            (name, email, slack, error, adding) = ("", "", "", nil, false)
+            await load()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
 }

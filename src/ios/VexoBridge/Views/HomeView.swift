@@ -91,6 +91,7 @@ private struct TodayView: View {
                 }
                 .padding(.top, 6)
                 NotesSection(store: store)
+                OrdersSection(store: store)
                 ActivitySection(store: store)
             }
             .padding(.horizontal, 16)

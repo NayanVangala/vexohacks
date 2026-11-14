@@ -32,8 +32,8 @@ struct RootView: View {
                 .badge(store.inbox.count)
                 .tag("needs")
             TasksView(store: store)
-                .tabItem { Label("Tasks", systemImage: "checklist") }
-                .badge(store.tasks.count)
+                .tabItem { Label("Follow-through", systemImage: "checklist") }
+                .badge(store.tasks.count + store.promises.filter { $0.status == "pending" || $0.status == "needs_review" }.count)
                 .tag("tasks")
             ThingsView(store: store)
                 .tabItem { Label("Things", systemImage: "key.horizontal") }
@@ -448,7 +448,9 @@ private struct TasksView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                PageTitle("Tasks", subtitle: "\(store.tasks.count) open · from what you heard")
+                PageTitle("Follow-through", subtitle: subtitle)
+                PromisesSection(store: store)
+                if !store.promises.isEmpty { Eyebrow("To-dos").padding(.top, 6) }
                 if store.tasks.isEmpty {
                     EmptyNote("Nothing open. When someone asks you to do something, it lands here.")
                 } else {
@@ -468,6 +470,11 @@ private struct TasksView: View {
         }
         .background(Theme.canvas.ignoresSafeArea())
         .refreshable { await store.refreshLists() }
+    }
+
+    private var subtitle: String {
+        let waiting = store.promises.filter { $0.status == "pending" || $0.status == "needs_review" }.count
+        return "\(waiting) promise\(waiting == 1 ? "" : "s") waiting, \(store.tasks.count) to-do\(store.tasks.count == 1 ? "" : "s")"
     }
 }
 

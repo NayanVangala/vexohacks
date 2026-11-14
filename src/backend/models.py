@@ -157,6 +157,18 @@ def grounded(prompt: str, tool: str, latlng: tuple[float, float] | None = None) 
     return "".join(p.get("text", "") for p in out["candidates"][0]["content"]["parts"])
 
 
+def agent_step(system: str, history: list[dict], tools: list[dict]) -> dict:
+    """One turn of the dining agent: Gemini function calling. Returns {text, call: {name, args} | None, parts}.
+    `parts` is the model's raw turn; the caller replays it so thought signatures survive."""
+    out = _gemini(f"models/{GEMINI_MODEL}:generateContent", timeout=60, json={
+        "systemInstruction": {"parts": [{"text": system}]}, "contents": history,
+        "tools": [{"functionDeclarations": tools}], "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}}})
+    parts = out["candidates"][0]["content"].get("parts", [])
+    fc = next((p["functionCall"] for p in parts if "functionCall" in p), None)
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip() or None
+    return {"text": None if fc else text, "call": {"name": fc["name"], "args": fc.get("args", {})} if fc else None, "parts": parts}
+
+
 def make_notes(transcript: str, slide_texts: list[str]) -> dict:
     from datetime import datetime
     from zoneinfo import ZoneInfo

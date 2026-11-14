@@ -20,10 +20,12 @@ WAKE = re.compile(os.environ.get(
 WINDOW_S = float(os.environ.get("SCENE_WAKE_WINDOW_S", "6"))      # keep listening this long for the question
 MIN_QUESTION_CHARS = int(os.environ.get("SCENE_WAKE_MIN_CHARS", "12"))
 COOLDOWN_S = float(os.environ.get("SCENE_WAKE_COOLDOWN_S", "4"))   # answers play in the glasses now, the mic barely hears them  # glasses mic hears the laptop answer
-# Sarah: mature, reassuring, American. Alternatives on the account: River (SAz9YHcvj6GT2YYXdXww, relaxed,
-# neutral), Eric (cjVigY5qzO86Huf0OWal, smooth). Flash is ElevenLabs' lowest-latency model.
-ELEVEN_VOICE = os.environ.get("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
-ELEVEN_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+# Alternatives on the account: Sarah (EXAVITQu4vr4xnSDxMaL, reassuring), River (SAz9YHcvj6GT2YYXdXww, relaxed,
+# neutral), Eric (cjVigY5qzO86Huf0OWal, smooth).
+ELEVEN_VOICE = os.environ.get("ELEVENLABS_VOICE_ID", "cgSgspJ2msm6clMCkdW9")   # Jessica: bright, warm
+ELEVEN_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")    # most natural; ~0.6 s, made ahead of time
+# Conversational delivery: lower stability = less monotone, some style = expression. Not a copy of any product's voice.
+ELEVEN_SETTINGS = {"stability": 0.4, "similarity_boost": 0.8, "style": 0.3, "use_speaker_boost": True}
 
 # Whisper invents these on silence. ponytail: fixed list; widen it from real logs if more show up.
 HALLUCINATIONS = {"thank you", "thanks for watching", "you", "bye", "thank you for watching", "okay"}
@@ -166,6 +168,18 @@ _utterance_ids = _itertools.count(int(time.time() * 1000))
 _audio_cache: dict[int, tuple[bytes, str]] = {}
 
 
+def chime() -> None:
+    """The 'I heard you' ping, played the moment the wake word is recognized (like Meta AI's).
+    The phone plays its own chime for a {kind: chime} line (nothing to download); the laptop plays Tink."""
+    if not speaks():
+        return
+    target = speak_on()
+    if target in ("glasses", "both"):
+        _utterances.append({"id": next(_utterance_ids), "text": "", "kind": "chime", "ts": time.time()})
+    if target in ("laptop", "both"):
+        subprocess.Popen(["afplay", "/System/Library/Sounds/Tink.aiff"])
+
+
 def speak(text: str) -> None:
     """Fire and forget: never blocks the audio lane. Silent when the wearer chose cards only."""
     if not speaks():
@@ -219,7 +233,7 @@ def synthesize(text: str) -> tuple[bytes, str]:
         try:
             r = httpx.post(f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE}",
                            headers={"xi-api-key": key}, timeout=15,
-                           json={"text": text, "model_id": ELEVEN_MODEL})
+                           json={"text": text, "model_id": ELEVEN_MODEL, "voice_settings": ELEVEN_SETTINGS})
             r.raise_for_status()
             return r.content, "audio/mpeg"
         except Exception as e:
@@ -239,7 +253,7 @@ def _play_on_laptop(text: str) -> None:
         try:
             r = httpx.post(f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE}",
                            headers={"xi-api-key": key}, timeout=15,
-                           json={"text": text, "model_id": ELEVEN_MODEL})
+                           json={"text": text, "model_id": ELEVEN_MODEL, "voice_settings": ELEVEN_SETTINGS})
             r.raise_for_status()
             f = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
             f.write(r.content)

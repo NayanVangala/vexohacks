@@ -61,6 +61,7 @@ struct Utterance: Decodable, Sendable {
     let id: Int
     let text: String
     let ts: Double
+    let kind: String?     // "chime": play the local "I heard you" ping, nothing to download
 }
 
 struct AskResult: Decodable, Sendable {
@@ -267,6 +268,8 @@ final class MemoryStore {
 
     /// Called with each new spoken line's audio (ElevenLabs MP3), to play on the glasses' speakers.
     var onSpeech: ((Data) -> Void)?
+    /// Called the moment the laptop recognizes "hey scene".
+    var onChime: (() -> Void)?
     private var lastSpeech = -1   // -1: first poll only catches up, never replays old lines
 
     private var lastCardId = 0
@@ -337,6 +340,10 @@ final class MemoryStore {
         lastSpeech = max(lastSpeech, lines.map(\.id).max() ?? 0, 0)
         guard !catchingUp else { return }
         for line in lines where Date().timeIntervalSince1970 - line.ts < 30 {   // stale lines aren't worth saying
+            if line.kind == "chime" {
+                if Date().timeIntervalSince1970 - line.ts < 5 { onChime?() }   // a late ping is just confusing
+                continue
+            }
             guard let url = URL(string: "\(backend.baseURL)/speech/\(line.id)"),
                   let (data, response) = try? await URLSession.shared.data(from: url),
                   (response as? HTTPURLResponse)?.statusCode == 200 else { continue }

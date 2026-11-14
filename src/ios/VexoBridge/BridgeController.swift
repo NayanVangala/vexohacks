@@ -165,6 +165,9 @@ final class BridgeController {
         memory.onSpeech = { [weak self] audio in
             self?.player.speak(audio)
         }
+        memory.onChime = { [weak self] in
+            self?.player.chime()
+        }
 
         // NOTHING in this initializer may touch the MWDAT SDK. SwiftUI evaluates
         // an App's stored properties before its init() body, so this runs before

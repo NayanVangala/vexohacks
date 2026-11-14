@@ -50,6 +50,40 @@ final class AudioPlayer: NSObject {
         }
     }
 
+    // MARK: - Wake chime
+
+    /// "I heard you": two soft notes, played the moment "hey scene" is recognized. Jumps the queue.
+    func chime() {
+        queue.insert(Self.chimeWAV, at: 0)
+        if player == nil { playNext() }
+    }
+
+    /// C6 then G6 with a fast decay, rendered once as 16-bit mono WAV. No asset to ship.
+    private static let chimeWAV: Data = {
+        let sr = 44_100.0, total = 0.45
+        let notes: [(freq: Double, start: Double, dur: Double)] = [(1046.5, 0, 0.18), (1568.0, 0.1, 0.32)]
+        var samples = [Double](repeating: 0, count: Int(total * sr))
+        for note in notes {
+            let s0 = Int(note.start * sr)
+            for i in 0..<Int(note.dur * sr) where s0 + i < samples.count {
+                let t = Double(i) / sr
+                let envelope = min(1, t * 300) * exp(-t * 11)          // soft attack, bell-like decay
+                samples[s0 + i] += sin(2 * .pi * note.freq * t) * envelope * 0.32
+            }
+        }
+        var pcm = Data(capacity: samples.count * 2)
+        for s in samples {
+            var v = Int16(max(-1, min(1, s)) * 32_767).littleEndian
+            withUnsafeBytes(of: &v) { pcm.append(contentsOf: $0) }
+        }
+        func le32(_ x: UInt32) -> Data { withUnsafeBytes(of: x.littleEndian) { Data($0) } }
+        func le16(_ x: UInt16) -> Data { withUnsafeBytes(of: x.littleEndian) { Data($0) } }
+        var wav = Data("RIFF".utf8) + le32(UInt32(36 + pcm.count)) + Data("WAVEfmt ".utf8)
+        wav += le32(16) + le16(1) + le16(1) + le32(UInt32(sr)) + le32(UInt32(sr) * 2) + le16(2) + le16(16)
+        wav += Data("data".utf8) + le32(UInt32(pcm.count)) + pcm
+        return wav
+    }()
+
     // MARK: - Spoken lines
 
     /// Lines waiting their turn: a new answer never cuts off the one being spoken.

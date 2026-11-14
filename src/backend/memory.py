@@ -274,6 +274,13 @@ def process_frame(path: Path) -> None:
         add("event", activity, frame=path.name)
 
 
+# Questions only Scene would be asked ("Where are my keys?"). If the wake word was missed, these are
+# answered anyway and never become promises or tasks.
+_QUESTION_TO_SCENE = re.compile(
+    r"^\W*(where('?s| is| are| did i (leave|put)| was)\b.*\bmy\b|did i (leave|put|send|pay)\b|what did .{0,20}(ask|tell) me\b)"
+    r".*\?\s*$", re.I)
+
+
 def process_audio(path: Path) -> None:
     if _ft_queue:
         _ft_ask_next()         # a question timed out unanswered: move on to the next one
@@ -294,6 +301,10 @@ def process_audio(path: Path) -> None:
         return
     if dining_turn(text):
         return
+    if not voice.WAKE.search(text) and not voice.listening() and _QUESTION_TO_SCENE.search(text):
+        text = "hey scene, " + text   # "hey scene" got lost in the last chunk; this is still a question to Scene
+    if voice.WAKE.search(text) and not voice.listening():
+        voice.chime()          # "I heard you", before any model work
     question = voice.heard(text)
     if question and dining_turn(question, wake=True):
         return

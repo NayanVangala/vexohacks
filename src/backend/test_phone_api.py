@@ -120,3 +120,33 @@ def test_orders_list_newest_first():
     o2 = orders.propose(place, [{"name": "Fries", "price_cents": 419, "qty": 2}])
     got = c.get("/orders").json()
     assert [o["id"] for o in got] == [o2["id"], o1["id"]] and got[0]["total_cents"] == 838 and got[0]["stage"] == "awaiting_approval"
+
+
+# ---- the glasses and the phone send form-encoded bodies; our own tools send JSON. Both must work.
+
+def test_agent_reply_and_location_accept_form_and_json(monkeypatch):
+    got = []
+    monkeypatch.setattr(memory.agent, "reply", lambda t: got.append(t))
+    monkeypatch.setattr(memory.agent, "state", lambda: {"status": "waiting", "question": "q", "session": 1})
+    assert c.post("/agent/reply", data={"text": "yes"}).status_code == 200
+    assert c.post("/agent/reply", json={"text": "no"}).status_code == 200
+    assert c.post("/agent/reply", data={}).status_code == 422
+    assert got == ["yes", "no"]
+    memory._loc = None
+    assert c.post("/location", data={"lat": "37.7", "lng": "-122.4"}).status_code == 200
+    assert memory.get_location() == (37.7, -122.4)
+    assert c.post("/location", json={"lat": 1.0, "lng": 2.0}).status_code == 200
+    for bad in ({"lat": "abc", "lng": "1"}, {"lat": "999", "lng": "1"}, {"lat": "1"}):
+        assert c.post("/location", data=bad).status_code == 422
+    memory._loc = None
+
+
+def test_session_reports_whether_notes_are_being_taken():
+    import notes
+    notes.stop()
+    assert c.get("/session").json()["notes"] == {"active": False, "started": None, "slides": 0, "lines": 0}
+    notes.start(100.0)
+    notes.add_line("hello")
+    s = c.get("/session").json()["notes"]
+    assert s["active"] is True and s["started"] == 100.0 and s["lines"] == 1
+    notes.stop()

@@ -12,6 +12,7 @@ All JSON, snake_case (the app's decoder converts). Base URL = the tunnel. Everyt
 | `GET /notes/<id>` | `{summary, decisions[], action_items[{text, quote, action?, ...}], slides[{frame, text}]}` | Notes detail. Slide image = `GET /frames/<frame>`. |
 | `GET /activity?limit=50&today=true` | `[{id, kind, text, status, frame, ts}]`, newest first. kind = `event` (seen, approved, paid, ...), `task` (status `open`/`done`), `notes` | "What Scene did today". |
 | `GET /orders` | `[{id, place_name, address, items[{name, price_cents, qty}], total_cents, status, stage, url, ts}]` | Orders. `stage`: awaiting_approval, awaiting_payment, received, preparing, ready, rejected. Open `<base>/order/<id>` in Safari to pay or watch progress. |
+| `GET /session` | `{notes: {active, started, slides, lines}}` | "Taking notes" indicator. `POST /notes/stop` ends it. |
 | `GET /agent` | `{status: idle\|running\|waiting\|done, question, session}` | Optional: show the ordering agent's question live. |
 | existing | `/tasks`, `/items`, `/payments`, `/today`, `/stats` | unchanged |
 
@@ -21,7 +22,7 @@ All JSON, snake_case (the app's decoder converts). Base URL = the tunnel. Everyt
 {"label": "Send", "method": "POST", "path": "/emails/3/send", "primary": true}
 {"label": "Yes", "method": "POST", "path": "/agent/reply", "json": {"text": "yes"}, "primary": true}
 ```
-Send `method` to `base + path`, with `json` as the body when present (`Content-Type: application/json`).
+Send `method` to `base + path`. When `json` is present send it as the body, either as JSON (`Content-Type: application/json`) or form-encoded, which is what the app's existing `post(form:)` does; `/agent/reply` and `/location` accept both.
 A 409 means it was already answered or expired: just refresh the list. Each action response is the updated object.
 
 ## Send this

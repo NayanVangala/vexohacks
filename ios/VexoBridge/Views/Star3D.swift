@@ -1,0 +1,126 @@
+//
+//  Star3D.swift
+//  VexoBridge
+//
+//  The app's four-point star as a real 3D object: the same outline as
+//  FourPointStar, extruded with chamfered edges in SceneKit and lit like a
+//  glazed ceramic piece. Sways gently; a tap flicks it round once. Static when
+//  Reduce Motion is on. No assets, no Blender: geometry is built at runtime.
+//
+
+import SwiftUI
+import SceneKit
+
+struct Star3D: UIViewRepresentable {
+    var color: Color = Theme.star
+    var spin = true
+    /// 0...1: how thick the extrusion is relative to the star's width.
+    var depth: CGFloat = 0.22
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeUIView(context: Context) -> SCNView {
+        let view = SCNView()
+        view.backgroundColor = .clear
+        view.antialiasingMode = .multisampling4X
+        view.isUserInteractionEnabled = true
+        view.scene = makeScene()
+        view.pointOfView = view.scene?.rootNode.childNode(withName: "camera", recursively: false)
+        view.addGestureRecognizer(UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.flick)))
+        context.coordinator.view = view
+        startIdle(view)
+        return view
+    }
+
+    func updateUIView(_ view: SCNView, context: Context) {
+        star(in: view)?.geometry?.firstMaterial?.diffuse.contents = UIColor(color)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(reduceMotion: reduceMotion) }
+
+    final class Coordinator: NSObject {
+        weak var view: SCNView?
+        let reduceMotion: Bool
+        init(reduceMotion: Bool) { self.reduceMotion = reduceMotion }
+
+        @objc func flick() {
+            guard !reduceMotion, let node = view?.scene?.rootNode.childNode(withName: "star", recursively: true) else { return }
+            let spin = SCNAction.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 0.9)
+            spin.timingMode = .easeOut
+            node.runAction(spin, forKey: "flick")
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        }
+    }
+
+    // MARK: - Scene
+
+    private func makeScene() -> SCNScene {
+        let scene = SCNScene()
+        scene.background.contents = UIColor.clear
+
+        // Geometry: the 2D star outline, extruded and rounded off.
+        let outline = FourPointStar(pinch: 0.16).path(in: CGRect(x: -1, y: -1, width: 2, height: 2))
+        let bezier = UIBezierPath(cgPath: outline.cgPath)
+        bezier.flatness = 0.004
+        let shape = SCNShape(path: bezier, extrusionDepth: depth * 2)
+        shape.chamferRadius = depth * 0.2
+        shape.chamferMode = .both
+
+        let material = SCNMaterial()
+        material.lightingModel = .physicallyBased
+        material.diffuse.contents = UIColor(color)
+        material.roughness.contents = 0.32
+        material.metalness.contents = 0.05
+        material.clearCoat.contents = 0.6
+        shape.materials = [material]
+
+        let star = SCNNode(geometry: shape)
+        star.name = "star"
+        let tilt = SCNNode()
+        tilt.eulerAngles = SCNVector3(-0.14, 0.3, 0.06)   // resting pose: a little turned, so the depth reads
+        tilt.addChildNode(star)
+        scene.rootNode.addChildNode(tilt)
+
+        // Light: soft key from top-left, warm fill, faint rim. Ambient keeps the shadow side from going muddy.
+        func light(_ type: SCNLight.LightType, _ intensity: CGFloat, _ color: UIColor, at p: SCNVector3? = nil) {
+            let l = SCNLight()
+            l.type = type
+            l.intensity = intensity
+            l.color = color
+            let n = SCNNode()
+            n.light = l
+            if let p { n.position = p; n.look(at: SCNVector3Zero) }
+            scene.rootNode.addChildNode(n)
+        }
+        light(.ambient, 300, UIColor(white: 1, alpha: 1))
+        light(.directional, 800, UIColor(white: 1, alpha: 1), at: SCNVector3(-3, 4, 5))
+        light(.omni, 380, UIColor(red: 1, green: 0.82, blue: 0.7, alpha: 1), at: SCNVector3(3, -2, 3))
+        light(.directional, 260, UIColor(white: 1, alpha: 1), at: SCNVector3(0, 2, -4))
+
+        let camera = SCNNode()
+        camera.name = "camera"
+        camera.camera = SCNCamera()
+        camera.camera?.fieldOfView = 30
+        camera.position = SCNVector3(0, 0, 4.6)
+        scene.rootNode.addChildNode(camera)
+        return scene
+    }
+
+    private func star(in view: SCNView) -> SCNNode? {
+        view.scene?.rootNode.childNode(withName: "star", recursively: true)
+    }
+
+    private func startIdle(_ view: SCNView) {
+        guard spin, !reduceMotion, let node = star(in: view) else { return }
+        // Sway, don't spin: a full turn shows the star edge-on, where it reads as a slab.
+        let swayRight = SCNAction.rotateTo(x: 0.06, y: 0.55, z: 0, duration: 2.6, usesShortestUnitArc: true)
+        let swayLeft = SCNAction.rotateTo(x: -0.06, y: -0.55, z: 0, duration: 2.6, usesShortestUnitArc: true)
+        swayRight.timingMode = .easeInEaseOut
+        swayLeft.timingMode = .easeInEaseOut
+        let sway = SCNAction.repeatForever(.sequence([swayRight, swayLeft]))
+        let bobUp = SCNAction.moveBy(x: 0, y: 0.06, z: 0, duration: 1.8)
+        bobUp.timingMode = .easeInEaseOut
+        let bob = SCNAction.repeatForever(.sequence([bobUp, bobUp.reversed()]))
+        node.runAction(.group([sway, bob]), forKey: "idle")
+    }
+}

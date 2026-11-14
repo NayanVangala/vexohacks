@@ -75,7 +75,7 @@ extension BackendClient {
 
     func get<T: Decodable>(_ path: String) async throws -> T {
         let (data, response) = try await URLSession.shared.data(from: try endpoint(path))
-        try Self.ensureOK(response, path: path)
+        try Self.ensureOK(response, data: data, path: path)
         return try Self.decoder.decode(T.self, from: data)
     }
 
@@ -92,7 +92,7 @@ extension BackendClient {
             req.httpBody = c.percentEncodedQuery?.data(using: .utf8)
         }
         let (data, response) = try await URLSession.shared.data(for: req)
-        try Self.ensureOK(response, path: path)
+        try Self.ensureOK(response, data: data, path: path)
         return try Self.decoder.decode(T.self, from: data)
     }
 
@@ -108,9 +108,13 @@ extension BackendClient {
         return u
     }
 
-    private static func ensureOK(_ response: URLResponse, path: String) throws {
+    private static func ensureOK(_ response: URLResponse, data: Data, path: String) throws {
         guard let http = response as? HTTPURLResponse else { throw BackendError.notHTTP }
-        guard (200..<300).contains(http.statusCode) else { throw BackendError.httpStatus(http.statusCode, path: path) }
+        guard (200..<300).contains(http.statusCode) else {
+            struct Detail: Decodable { let detail: String }
+            if let d = try? JSONDecoder().decode(Detail.self, from: data) { throw BackendError.server(d.detail) }
+            throw BackendError.httpStatus(http.statusCode, path: path)
+        }
     }
 }
 
@@ -139,6 +143,9 @@ final class MemoryStore {
     /// The approved payment whose QR the other person is scanning. Set on
     /// approve (from the phone OR a pinch on the glasses), polled until paid.
     var checkout: Payment?
+
+    /// Shown as a banner: what failed and what to do about it.
+    var notice: String?
 
     /// Called once per genuinely new card, so the glasses can show it.
     var onNewCard: ((Card) -> Void)?
@@ -218,19 +225,23 @@ final class MemoryStore {
             BridgeState.log("PAY approved #\(paymentId)")
         } catch {
             BridgeState.logError("approve payment", error)
+            let why = error.localizedDescription
+            notice = why.contains("test-mode") || why.contains("STRIPE")
+                ? "Payments aren't set up yet. Add a Stripe test key (sk_test_…) to receiver/.env on the laptop, then restart it."
+                : "Couldn't request the money: \(why)"
         }
         await refreshLists()
     }
 
     func reject(_ paymentId: Int) async {
         do { let _: Ignored = try await backend.post("/payments/\(paymentId)/reject") }
-        catch { BridgeState.logError("reject payment", error) }
+        catch { BridgeState.logError("reject payment", error); notice = "Couldn't dismiss that request. Is the laptop reachable?" }
         await refreshLists()
     }
 
     func complete(_ taskId: Int) async {
         do { let _: Ignored = try await backend.post("/tasks/\(taskId)/done") }
-        catch { BridgeState.logError("task done", error) }
+        catch { BridgeState.logError("task done", error); notice = "Couldn't mark that done. Is the laptop reachable?" }
         await refreshLists()
     }
 
@@ -240,6 +251,6 @@ final class MemoryStore {
         asking = true
         defer { asking = false }
         do { lastAnswer = try await backend.post("/ask", form: ["text": q]) }
-        catch { BridgeState.logError("ask", error) }
+        catch { BridgeState.logError("ask", error); notice = "Couldn't reach your memory. Check the laptop address in the Glasses tab." }
     }
 }

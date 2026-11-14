@@ -193,6 +193,20 @@ final class BridgeController {
         }
     }
 
+    // MARK: - Read-outs for the Glasses tab (polled, not observed)
+
+    var framesSent: Int { framesPostedCounter.value }
+    var framesFromGlasses: Int { wearables.framesReceived }
+    var reconnects: Int { max(0, wearables.generation - 1) }
+    var displayState: String { wearables.glassesDisplay.stateText }
+
+    /// Look for the laptop over Bonjour and switch to it. True if found and reachable.
+    func findLaptop() async -> Bool {
+        guard let found = await Discovery.findReceiver() else { return false }
+        backend.setBaseURL(found)
+        return (try? await backend.getStats()) != nil
+    }
+
     func connectWearables() async {
         await wearables.startRegistration()
     }

@@ -169,6 +169,9 @@ final class WearablesManager {
     private var session: DeviceSession?
     private var stream: MWDATCamera.Stream?
 
+    static let damEnabled: Bool =
+        (Bundle.main.object(forInfoDictionaryKey: "MWDAT") as? [String: Any])?["DAMEnabled"] as? Bool ?? false
+
     /// Phase 0 display spike. Rides the same session as the camera stream.
     let glassesDisplay = GlassesDisplay()
 
@@ -495,7 +498,14 @@ final class WearablesManager {
 
             // 9 — display, AFTER the stream is up, so a Display failure can only
             //     cost us the card, never the camera.
-            await glassesDisplay.attach(to: session)
+            // Only with DAM on: Display requires it, and DAM is the one change that
+            // could affect the camera. Flip MWDAT.DAMEnabled in Info.plist to test
+            // camera-only vs camera+display on real glasses.
+            if Self.damEnabled {
+                await glassesDisplay.attach(to: session)
+            } else {
+                BridgeState.log("DISPLAY skipped: MWDAT.DAMEnabled is off (camera-only build)")
+            }
 
             #if DEBUG
             // Recreate before the 30 s self-destruct, so no single stream ever

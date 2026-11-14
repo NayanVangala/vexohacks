@@ -20,12 +20,15 @@ enum BackendError: LocalizedError {
     case badURL(String)
     case httpStatus(Int, path: String)
     case notHTTP
+    /// The server said why (FastAPI `detail`), e.g. "daily cap $100.00 reached".
+    case server(String)
 
     var errorDescription: String? {
         switch self {
         case .badURL(let s):              return "bad backend URL: \(s)"
         case .httpStatus(let c, let p):   return "HTTP \(c) from \(p)"
         case .notHTTP:                    return "non-HTTP response"
+        case .server(let detail):         return detail
         }
     }
 }

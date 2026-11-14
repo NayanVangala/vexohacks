@@ -17,20 +17,37 @@ import CoreImage.CIFilterBuiltins
 struct RootView: View {
     let controller: BridgeController
     @AppStorage("seenIntro") private var seenIntro = false
+    /// Launch with `-startTab glasses` (or tasks/things) to open on that tab: screenshots, demo takes.
+    @State private var tab = UserDefaults.standard.string(forKey: "startTab") ?? "today"
 
     var body: some View {
         @Bindable var store = controller.memory
-        TabView {
+        TabView(selection: $tab) {
             TodayView(controller: controller, replayIntro: { seenIntro = false })
                 .tabItem { Label("Today", systemImage: "sparkle") }
+                .tag("today")
             TasksView(store: store)
                 .tabItem { Label("Tasks", systemImage: "checklist") }
                 .badge(store.tasks.count)
+                .tag("tasks")
             ThingsView(store: store)
                 .tabItem { Label("Things", systemImage: "key.horizontal") }
-            NavigationStack { ContentView(controller: controller) }
+                .tag("things")
+            GlassesView(controller: controller)
                 .tabItem { Label("Glasses", systemImage: "eyeglasses") }
+                .tag("glasses")
         }
+        .overlay(alignment: .top) {
+            if let notice = store.notice {
+                NoticeBanner(text: notice) { store.notice = nil }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .task(id: notice) {
+                        try? await Task.sleep(for: .seconds(6))
+                        if store.notice == notice { store.notice = nil }
+                    }
+            }
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: store.notice)
         .tint(Theme.ink)
         .preferredColorScheme(.light)   // one palette for now; dark comes with the real theme
         // Pops on approve, from the phone OR a pinch on the glasses: the other
@@ -62,8 +79,8 @@ private struct TodayView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 VStack(spacing: -Theme.overlap) {
-                    StackCard(color: Theme.card, index: 0) { TodayCard(today: store.today) }
-                    StackCard(color: Theme.butter, index: 1) { NeedsYouCard(store: store) }
+                    StackCard(color: Theme.card, index: 0) { TodayCard(today: store.today) }.scrollDepth()
+                    StackCard(color: Theme.butter, index: 1) { NeedsYouCard(store: store) }.scrollDepth()
                     captureButton.rise(2)
                 }
                 .padding(.horizontal, -16)   // cards run edge to edge like the reference
@@ -84,9 +101,11 @@ private struct TodayView: View {
             Button(action: replayIntro) {
                 ZStack {
                     Circle().fill(Theme.action)
-                    FourPointStar().fill(Theme.star).padding(9)
+                    StarGlow().scaleEffect(0.6)
+                    Star3D(color: Theme.star, depth: 0.28).padding(2).allowsHitTesting(false)
                 }
-                .frame(width: 46, height: 46)
+                .frame(width: 50, height: 50)
+                .overlay { Twinkles(color: .white).frame(width: 72, height: 72) }
             }
             .accessibilityLabel("Replay intro")
             VStack(alignment: .leading, spacing: 0) {
@@ -157,7 +176,7 @@ private struct TodayView: View {
                 if busy { ProgressView().tint(Theme.ink).frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 28) }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.squish)
         .disabled(busy)
         .padding(.horizontal, 8)
         .sensoryFeedback(.impact, trigger: bridge.isRunning)
@@ -241,7 +260,6 @@ private struct TodayCard: View {
 /// The butter card: a payment waiting on you, or "all clear" + things recently seen.
 private struct NeedsYouCard: View {
     let store: MemoryStore
-    @State private var spin = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -289,9 +307,7 @@ private struct NeedsYouCard: View {
     }
 
     private var star: some View {
-        FourPointStar().fill(Theme.action).frame(width: 26, height: 26)
-            .rotationEffect(.degrees(spin ? 90 : 0))
-            .onAppear { withAnimation(.spring(response: 1.2, dampingFraction: 0.6).delay(0.6)) { spin = true } }
+        Star3D(color: Theme.action, depth: 0.3).frame(width: 44, height: 44).accessibilityHidden(true)
     }
 
     /// Overlapping circles of the last few things seen, like the reference's app-icon row.
@@ -317,7 +333,7 @@ private struct NeedsYouCard: View {
                 .background(filled ? Theme.ink : .clear, in: Capsule())
                 .overlay(Capsule().stroke(Theme.ink.opacity(filled ? 0 : 0.25)))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.squish)
         .sensoryFeedback(.success, trigger: filled ? pending?.status : nil)
     }
 }
@@ -432,6 +448,7 @@ private struct TasksView: View {
                             StackCard(color: Theme.pastels[i % Theme.pastels.count], index: i) {
                                 TaskRow(task: task) { Task { await store.complete(task.id) } }
                             }
+                            .scrollDepth()
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                         }
                     }
@@ -465,7 +482,7 @@ private struct TaskRow: View {
                 Image(systemName: "checkmark").font(.subheadline.weight(.bold)).foregroundStyle(Theme.ink)
                     .frame(width: 48, height: 48).background(Theme.card, in: Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.squish)
             .accessibilityLabel("Mark done")
             .sensoryFeedback(.success, trigger: task.id)
         }
@@ -496,6 +513,7 @@ private struct ThingsView: View {
                             StackCard(color: Theme.pastels[i % Theme.pastels.count], index: i) {
                                 ThingRow(thing: thing, image: store.backend.frameURL(thing.frame), open: open == thing.id)
                             }
+                            .scrollDepth()
                             .onTapGesture {
                                 withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
                                     open = open == thing.id ? nil : thing.id
@@ -569,11 +587,12 @@ private struct IntroView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             Theme.action.ignoresSafeArea()
-            FourPointStar(pinch: 0.12)
-                .fill(Theme.star)
-                .frame(width: bloom ? 520 : 140, height: bloom ? 520 : 140)
+            Star3D(color: Theme.star, depth: 0.16)
+                .frame(width: 560, height: 560)
+                .scaleEffect(bloom ? 1 : 0.25)
                 .rotationEffect(.degrees(bloom ? 0 : -45))
                 .position(x: 150, y: 470)
+                .allowsHitTesting(false)
             VStack(alignment: .leading, spacing: -6) {
                 ForEach(Array(words.enumerated()), id: \.offset) { i, w in
                     Text(w)
@@ -597,7 +616,7 @@ private struct IntroView: View {
                     .padding(.horizontal, 28).padding(.vertical, 20)
                     .overlay(Capsule().stroke(Theme.ink, lineWidth: 1.2))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.squish)
                 .padding(22)
             }
         }
@@ -623,7 +642,7 @@ private struct CheckoutSheet: View {
                 Text(p.amountText).font(Theme.number(60)).foregroundStyle(Theme.ink)
                 Text("\(p.memo) · \(p.who)").foregroundStyle(Theme.inkSoft)
                 if p.status == "paid" {
-                    FourPointStar().fill(Theme.chart).frame(width: 140, height: 140)
+                    Star3D(color: Theme.chart).frame(width: 170, height: 170)
                         .transition(.scale.combined(with: .opacity))
                     Text("Thanks, all settled.").font(.title3.weight(.medium))
                 } else if let url = p.url, let qr = Self.qr(url) {

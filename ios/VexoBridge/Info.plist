@@ -26,7 +26,7 @@
 		     MWDATDisplay; camera works with or without it (CHANGELOG 0.7.0).
 		     If camera streaming regresses on real glasses, flip this first. -->
 		<key>DAMEnabled</key>
-		<true/>
+		<false/>
 	</dict>
 
 	<!-- §5.2 URL scheme — the registration callback. Omit this and Meta AI

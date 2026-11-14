@@ -75,7 +75,7 @@ enum Discovery {
 }
 
 /// A continuation must resume exactly once; NWConnection can report several states.
-private final class OnceFlag: @unchecked Sendable {
+final class OnceFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var done = false
     func claim() -> Bool { lock.withLock { defer { done = true }; return !done } }

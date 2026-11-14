@@ -782,7 +782,7 @@ final class WearablesManager {
                         + "in \(Self.streamRecycleInterval) — total \(framesAllGenerations)")
 
         // Teardown, in the same order as `stop()`. async under 0.7.0.
-        await stream?.stop()
+        await stopStreamBounded()
         let expired = tokens
         tokens.removeAll()
         for token in expired { await token.cancel() }
@@ -1019,12 +1019,26 @@ final class WearablesManager {
     /// Shared by `stop()` and recovery. Observer tasks are cancelled FIRST so the
     /// `.stopped` our own `session.stop()` emits cannot re-enter
     /// `handleUnexpectedSessionStop`. Stream before session, per §7.4.
+    /// `Stream.stop()` can wait forever once the glasses have already ended the session (seen live:
+    /// recovery sat at "stream stopping" for minutes). Give it 3 s, then move on and rebuild anyway.
+    private func stopStreamBounded() async {
+        guard let s = stream else { return }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            let once = OnceFlag()
+            Task { await s.stop(); if once.claim() { done.resume() } }
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                if once.claim() { BridgeState.log("stream stop timed out after 3 s — continuing"); done.resume() }
+            }
+        }
+    }
+
     private func teardownSessionArtifacts() async {
         stateTask?.cancel(); stateTask = nil
         errorTask?.cancel(); errorTask = nil
 
         await glassesDisplay.detach()  // capabilities before their session, like the stream
-        await stream?.stop()
+        await stopStreamBounded()
         session?.stop()
 
         let expired = tokens

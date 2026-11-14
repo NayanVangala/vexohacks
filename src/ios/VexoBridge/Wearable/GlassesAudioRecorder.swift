@@ -77,6 +77,7 @@ final class GlassesAudioRecorder: @unchecked Sendable {
     // MARK: - Start
 
     func start() async {
+        markSound()   // a fresh start gets a full grace period before the dead-input check
         stateLock.lock()
         if running { stateLock.unlock(); return }
         running = true
@@ -331,6 +332,7 @@ final class GlassesAudioRecorder: @unchecked Sendable {
             [weak self] buffer, _ in
             guard let self else { return }
             guard let data = self.convert(buffer) else { return }
+            if Self.hasSignal(data) { self.markSound() }
             self.onPCM(data)
         }
 
@@ -468,6 +470,24 @@ final class GlassesAudioRecorder: @unchecked Sendable {
             } catch {
                 BridgeState.log("!! audio restart failed: \(Self.describe(error))")
             }
+        }
+    }
+
+    // MARK: - Dead-input detection
+    //
+    // Measured 2026-11-14: opening a web app on the Ray-Ban Display disrupts the phone's audio and the
+    // engine keeps delivering buffers of exact zeros, "running" on a dead input. A real mic always has
+    // some noise, so a few seconds of pure zeros means the input died; BridgeController restarts it.
+
+    private let soundLock = NSLock()
+    private var _lastSoundAt = Date()
+    var secondsSinceSound: TimeInterval { soundLock.withLock { Date().timeIntervalSince(_lastSoundAt) } }
+    private func markSound() { soundLock.withLock { _lastSoundAt = Date() } }
+
+    /// Any sample other than (near) zero: a live mic never sits at exactly 0.
+    private static func hasSignal(_ pcm16: Data) -> Bool {
+        pcm16.withUnsafeBytes { raw in
+            raw.bindMemory(to: Int16.self).contains { abs(Int32($0)) > 2 }
         }
     }
 

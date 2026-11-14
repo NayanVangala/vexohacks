@@ -216,7 +216,10 @@ def process_frame(path: Path) -> None:
 
 
 def process_audio(path: Path) -> None:
-    text = models.transcribe(path.read_bytes())
+    wav = path.read_bytes()
+    if voice.is_silent(wav):   # room tone: skip the API call, and the hallucinations it invites
+        return
+    text = models.transcribe(wav)
     if not text or voice.is_noise(text):
         return
     pending = awareness.pending(time.time())

@@ -121,3 +121,13 @@ def test_provider_switch_reembeds_old_rows(monkeypatch):
     hits = memory.search(fake_embed("umbrella by the door"), 50)
     assert any(r["id"] == rid for _, r in hits)
     assert len(memory.json.loads(memory.rows("SELECT embedding FROM memories WHERE id=?", rid)[0]["embedding"])) == DIM
+
+
+def test_silence_and_phantom_phrases_are_dropped():
+    import struct
+    quiet = b"RIFF" + b"\0" * 40 + struct.pack("<1000h", *([15, -12] * 500))
+    loud = b"RIFF" + b"\0" * 40 + struct.pack("<1000h", *([900, -850] * 500))
+    assert voice.is_silent(quiet) and not voice.is_silent(loud)
+    assert voice.is_noise("Share this video with your friends on social media.")
+    assert voice.is_noise("Thanks for watching!")
+    assert not voice.is_noise("Can you send me the deck by four?")

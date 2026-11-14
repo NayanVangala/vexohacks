@@ -1,23 +1,57 @@
 # Scene
 
-Memory for Meta Ray-Ban Display glasses. The glasses see and hear your day; Scene remembers
-where you left things, what people asked you to do, and money you're owed, and acts on it
-with a pinch of the Meta Neural Band.
+Memory for camera wearables. Your glasses (or any camera you wear) see and hear your day; Scene
+remembers where you left things, what people asked you to do, and money you're owed, and acts on
+it with a tap, a pinch, or your voice.
 
 - **"Hey Scene, where are my keys?"** answered out loud, with the frame where they were last seen.
 - **Tasks from conversation.** "Can you send me the deck by 5?" becomes a task, and closes itself
   when you later say "I sent the deck".
 - **Money, safely.** Gemini reads the receipt, hears "I'll pay you back half", and *proposes* a
-  $12 request. Nothing reaches Stripe until you pinch **Approve** on the glasses; then the other
-  person scans a QR on your phone and pays.
+  $12 request. Nothing reaches Stripe until you approve it; then the other person scans a QR on
+  your phone and pays.
 
 Built at VexoHacks (Nov 14, 2026). The glasses-to-laptop streaming bridge was set up before the
-event; memory, payments, voice, the glasses display, and the phone app were built at the hackathon.
+event; memory, payments, voice, the glasses display, the phone app, and the open device API were
+built at the hackathon.
+
+## Devices: open by design
+
+Scene doesn't care what device it talks to. Anything that can send a photo and a short audio clip
+over HTTP is a Scene device:
+
+```
+POST /capture   multipart photo = one JPEG frame        every ~2.5 s
+POST /capture   multipart audio = one WAV chunk         16 kHz mono, ~2.5 s
+```
+
+| Device | Status |
+|---|---|
+| **Meta Ray-Ban Display + Neural Band** | Working today (`src/ios/`): camera, mic, cards on the in-lens display, pinch to approve. This is our demo device. |
+| **Any camera: laptop webcam, USB camera, Raspberry Pi, glasses dev kits** | Working today through `scripts/any-camera.sh` (ffmpeg + curl, about 60 lines). Point it at the server and it streams like the glasses do. |
+| **Open-source smart glasses** | Next: same two calls from their companion app. No backend changes needed. |
+| **Camera necklaces (e.g. Omi)** | Planned: same contract; a pendant camera is just another frame source. |
+
+```bash
+scripts/any-camera.sh                      # this Mac's webcam + mic becomes a Scene device
+SOURCE=test scripts/any-camera.sh          # synthetic frames, no camera needed
+INPUT="-f v4l2 -i /dev/video0" scripts/any-camera.sh   # Linux / Raspberry Pi camera
+```
+
+## Built to be accessible
+
+- **Hands-free by default.** Ask out loud ("hey scene"), hear the answer spoken back, approve with
+  a pinch. No screen needed for the everyday loop.
+- **For people who forget.** Where things are, what was promised, and what's owed, kept for you and
+  searchable by meaning, not exact words.
+- **Calm interface.** Large type, high-contrast numbers, one primary action per screen. All motion
+  respects iOS Reduce Motion.
+- **Bring your own hardware.** Not locked to one brand of glasses: any camera that can send a photo works.
 
 ## How it works
 
 ```
-Ray-Ban Display ──Bluetooth──▶ iPhone app ──Wi-Fi──▶ laptop receiver
+Ray-Ban Display ──Bluetooth──▶ iPhone app ──Wi-Fi──▶ laptop receiver   ◀── any camera (any-camera.sh)
   camera 1 frame / 2.5 s          VexoBridge            FastAPI (src/backend/)
   mic 2.5 s chunks                feed, tasks,          Gemini 4 Hydrogen: every frame
   display cards ◀── pinch ──      things, QR            OpenAI: speech, tasks, answers
@@ -59,7 +93,8 @@ src/backend/               laptop backend (FastAPI)
   voice.py                   "hey scene" wake word, spoken answers
   payments.py                Stripe Checkout behind the approval gate
 src/followthrough/         Follow-Through agent + web dashboard (laptop web app)
-scripts/                   start-scene.command (one-click start), render-icon.swift (app icon)
+scripts/                   start-scene.command (one-click start), any-camera.sh (any camera as a device),
+                           render-icon.swift (app icon)
 claude/                    Claude Code + ruflo workspace state
 ```
 

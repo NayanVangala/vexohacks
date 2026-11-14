@@ -43,7 +43,6 @@ struct NeedsYouView: View {
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                         }
                     }
-                    .padding(.horizontal, -16)
                     .animation(.spring(response: 0.5, dampingFraction: 0.85), value: store.inbox.map(\.id))
                 }
             }

@@ -87,7 +87,6 @@ private struct TodayView: View {
                     StackCard(color: Theme.butter, index: 1) { NeedsYouCard(store: store) }.scrollDepth()
                     captureButton.rise(2)
                 }
-                .padding(.horizontal, -16)   // cards run edge to edge like the reference
                 .padding(.top, 6)
                 NotesSection(store: store)
                 ActivitySection(store: store)
@@ -183,7 +182,6 @@ private struct TodayView: View {
         }
         .buttonStyle(.squish)
         .disabled(busy)
-        .padding(.horizontal, 8)
         .sensoryFeedback(.impact, trigger: bridge.isRunning)
     }
 
@@ -461,7 +459,6 @@ private struct TasksView: View {
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                         }
                     }
-                    .padding(.horizontal, -16)
                     .animation(.spring(response: 0.5, dampingFraction: 0.85), value: store.tasks)
                 }
             }
@@ -530,7 +527,6 @@ private struct ThingsView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, -16)
                 }
             }
             .padding(.horizontal, 16)
@@ -588,33 +584,87 @@ private struct ThingRow: View {
 
 private struct IntroView: View {
     let done: () -> Void
-    private let words = ["Keys", "Wallet", "Promises", "Deadlines", "Receipts", "Errands",
-                         "Names", "Places", "Moments", "Remember."]
+
+    /// Each word is a thing Scene remembers; tapping it says how.
+    private let words: [(word: String, what: String)] = [
+        ("Keys", "Glance at them once. Later: \u{201C}Hey Scene, where are my keys?\u{201D}"),
+        ("Wallet", "Wherever you set things down: wallet, phone, laptop, headphones."),
+        ("Promises", "\u{201C}I\u{2019}ll send it by four\u{201D} becomes a follow-up you approve with a pinch."),
+        ("Deadlines", "Due times come from what people actually said, quote and all."),
+        ("Receipts", "It reads the total and remembers who owes you what."),
+        ("Errands", "What you were asked to do lands in Tasks, and closes when you say it\u{2019}s done."),
+        ("Names", "Who asked for what, with their exact words as proof."),
+        ("Places", "\u{201C}On the kitchen counter, next to the sink,\u{201D} not just \u{201C}seen.\u{201D}"),
+        ("Moments", "Meetings become notes: summary, decisions, action items."),
+        ("Remember.", "Scene remembers so you don\u{2019}t have to. Nothing acts without your OK."),
+    ]
     @State private var lit = 0
+    @State private var picked: Int?          // a word the wearer tapped: shows its line, stops the auto-cycle
     @State private var bloom = false
+    @State private var drag: CGSize = .zero
+    @State private var frames: [Int: CGRect] = [:]
+
+    private var focus: Int { picked ?? lit }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             Theme.action.ignoresSafeArea()
-            Star3D(color: Theme.star, depth: 0.16)
-                .frame(width: 560, height: 560)
-                .scaleEffect(bloom ? 1 : 0.25)
-                .rotationEffect(.degrees(bloom ? 0 : -45))
-                .position(x: 150, y: 470)
-                .allowsHitTesting(false)
-            VStack(alignment: .leading, spacing: -6) {
+
+            VStack(alignment: .leading, spacing: -4) {
                 ForEach(Array(words.enumerated()), id: \.offset) { i, w in
-                    Text(w)
-                        .font(.system(size: 46, weight: .regular))
-                        .tracking(-1.5)
-                        .foregroundStyle(Theme.ink.opacity(i == lit ? 1 : 0.22))
-                        .scaleEffect(i == lit ? 1.04 : 1, anchor: .leading)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(w.word)
+                            .font(.system(size: 44, weight: .regular))
+                            .tracking(-1.5)
+                            .foregroundStyle(Theme.ink.opacity(i == focus ? 1 : 0.22))
+                            .scaleEffect(i == focus ? 1.04 : 1, anchor: .leading)
+                            .background(GeometryReader { g in
+                                Color.clear.preference(key: WordFrames.self, value: [i: g.frame(in: .named("intro"))])
+                            })
+                        if picked == i {
+                            Text(w.what)
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(Theme.ink.opacity(0.78))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.bottom, 10)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { picked = picked == i ? nil : i }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityHint(w.what)
                 }
             }
             .padding(.horizontal, 22)
-            .padding(.top, 40)
+            .padding(.top, 30)
+            .padding(.trailing, 110)
+
+            // The star rides beside whichever word is in focus. Drag it anywhere; it springs home. Tap to spin.
+            if let f = frames[focus] {
+                Star3D(color: Theme.star, depth: 0.2)
+                    .frame(width: 150, height: 150)
+                    .scaleEffect(bloom ? 1 : 0.2)
+                    .position(x: min(f.maxX + 70, UIScreen.main.bounds.width - 70), y: f.midY)
+                    .offset(drag)
+                    .gesture(DragGesture()
+                        .onChanged { drag = $0.translation }
+                        .onEnded { _ in withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) { drag = .zero } })
+                    .animation(.spring(response: 0.55, dampingFraction: 0.75), value: focus)
+                    .animation(.spring(response: 0.55, dampingFraction: 0.75), value: frames[focus])
+                    .accessibilityHidden(true)
+            }
+
             VStack {
                 Spacer()
+                Text(picked == nil ? "Tap a word to see what Scene does with it" : "Drag the star. Tap it to spin.")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Theme.ink.opacity(0.6))
+                    .frame(maxWidth: .infinity)
+                    .contentTransition(.opacity)
                 Button(action: done) {
                     HStack {
                         Text("Get started").font(.headline)
@@ -626,16 +676,26 @@ private struct IntroView: View {
                     .overlay(Capsule().stroke(Theme.ink, lineWidth: 1.2))
                 }
                 .buttonStyle(.squish)
-                .padding(22)
+                .padding(.horizontal, 22).padding(.bottom, 22).padding(.top, 8)
             }
         }
+        .coordinateSpace(.named("intro"))
+        .onPreferenceChange(WordFrames.self) { frames = $0 }
         .task {
-            withAnimation(.spring(response: 1.4, dampingFraction: 0.75)) { bloom = true }
+            withAnimation(.spring(response: 1.2, dampingFraction: 0.7)) { bloom = true }
             for i in words.indices {
                 try? await Task.sleep(for: .milliseconds(230))
+                guard picked == nil else { break }        // the wearer took over
                 withAnimation(.easeOut(duration: 0.2)) { lit = i }
             }
         }
+    }
+}
+
+private struct WordFrames: PreferenceKey {
+    static let defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue()) { $1 }
     }
 }
 

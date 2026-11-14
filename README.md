@@ -198,4 +198,4 @@ API:
 
 Load-bearing settings (retest on real glasses before changing): Meta Wearables DAT SDK **exactly
 0.7.0** (camera over Bluetooth; `DAMEnabled` in Info.plist for the display), `.raw` codec, `.medium`
-at 2 fps, 1 frame / 2.5 s upload, recovery backoff 2 → 30 s (glasses end sessions on their own).
+at 2 fps, every frame (2 fps, 0.5 s) upload, recovery backoff 2 → 30 s (glasses end sessions on their own).

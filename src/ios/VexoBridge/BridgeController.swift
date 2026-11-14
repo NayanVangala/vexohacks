@@ -80,6 +80,26 @@ final class BridgeController {
     //   both climb, posted stalls         -> uploads failing (network)
     //   rec=false                         -> audio engine died
     private var heartbeatTask: Task<Void, Never>?
+    private var micWatchdog: Task<Void, Never>?
+
+    /// Restarts the recorder when its input goes dead (pure zeros). Checks every 2 s; a restart
+    /// is skipped if one happened in the last 10 s, so a genuinely broken mic can't thrash.
+    private func startMicWatchdog() {
+        micWatchdog?.cancel()
+        micWatchdog = Task { [weak self] in
+            var lastRestart = Date.distantPast
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, !Task.isCancelled, BridgeState.shared.isRunning, self.recorder.isRunning else { continue }
+                if self.recorder.secondsSinceSound > 5, Date().timeIntervalSince(lastRestart) > 10 {
+                    lastRestart = Date()
+                    BridgeState.log("mic delivering only silence for 5 s — restarting the recorder")
+                    self.recorder.stop()
+                    await self.recorder.start()
+                }
+            }
+        }
+    }
 
     /// All three are lock-protected rather than actor-isolated: the POST closures
     /// are `@Sendable` and run off the main actor, and the mic tap fires on the
@@ -261,6 +281,7 @@ final class BridgeController {
         #else
         await recorder.start()
         #endif
+        startMicWatchdog()
 
         #if DEBUG
         startHeartbeat()
@@ -282,6 +303,7 @@ final class BridgeController {
         recorder.stop()
         passiveChunker.flush()
 
+        micWatchdog?.cancel(); micWatchdog = nil
         player.stop()
         // async under SDK 0.7.0 — see WearablesManager.stop().
         await wearables.stop()

@@ -125,8 +125,8 @@ def test_provider_switch_reembeds_old_rows(monkeypatch):
 
 def test_silence_and_phantom_phrases_are_dropped():
     import struct
-    quiet = b"RIFF" + b"\0" * 40 + struct.pack("<1000h", *([15, -12] * 500))
-    loud = b"RIFF" + b"\0" * 40 + struct.pack("<1000h", *([900, -850] * 500))
+    quiet = b"RIFF" + b"\0" * 40 + struct.pack("<1000h", *([3, -2] * 500))
+    loud = b"RIFF" + b"\0" * 40 + struct.pack("<1000h", *([20, -18] * 500))   # quiet speech at a table
     assert voice.is_silent(quiet) and not voice.is_silent(loud)
     assert voice.is_noise("Share this video with your friends on social media.")
     assert voice.is_noise("Thanks for watching!")

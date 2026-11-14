@@ -31,8 +31,9 @@ PHANTOM_PHRASES = ("share this video", "like and subscribe", "subscribe to", "se
                    "thanks for watching", "thank you for watching", "please subscribe", "don't forget to subscribe")
 
 # Below this RMS (16-bit samples) a chunk is room tone, not speech: don't transcribe it at all.
-# Measured on the iPhone mic: room 12-25, speech in the hundreds. Override with SCENE_SILENCE_RMS.
-SILENCE_RMS = float(os.environ.get("SCENE_SILENCE_RMS", "45"))
+# Measured on the iPhone mic at a table: true silence 0-5, speech 14-25 (peaks ~1000). Only drop true
+# silence; Whisper's inventions on quiet audio are caught by PHANTOM_PHRASES. Override with SCENE_SILENCE_RMS.
+SILENCE_RMS = float(os.environ.get("SCENE_SILENCE_RMS", "6"))
 
 _pending: str | None = None
 _until = 0.0

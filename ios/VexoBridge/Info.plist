@@ -75,6 +75,8 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_bonjour._tcp</string>
+		<!-- receiver/run.sh advertises this; Discovery.swift finds the laptop by it. -->
+		<string>_vexo._tcp</string>
 	</array>
 
 	<!-- §5.5 App Transport Security. The narrow key, NOT NSAllowsArbitraryLoads:

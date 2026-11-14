@@ -135,6 +135,7 @@ final class MemoryStore {
     var onNewCard: ((Card) -> Void)?
 
     private var lastCardId = 0
+    private var failures = 0
     private var primed = false
     private var pollTask: Task<Void, Never>?
 
@@ -156,6 +157,7 @@ final class MemoryStore {
         do {
             let new: [Card] = try await backend.get("/feed?after=\(lastCardId)")
             online = true
+            failures = 0
             if !new.isEmpty {
                 lastCardId = new.map(\.id).max() ?? lastCardId
                 cards.insert(contentsOf: new.reversed(), at: 0)
@@ -171,6 +173,14 @@ final class MemoryStore {
             }
         } catch {
             online = false
+            failures += 1
+            // Server started after the app, or the laptop changed IP: look for it
+            // over Bonjour every ~10 s instead of waiting for someone to type a URL.
+            if failures % 5 == 0, let found = await Discovery.findReceiver(timeout: .seconds(3)),
+               found != backend.baseURL {
+                backend.setBaseURL(found)
+                BridgeState.log("found receiver via Bonjour at \(found)")
+            }
         }
     }
 

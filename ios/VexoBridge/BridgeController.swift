@@ -182,6 +182,13 @@ final class BridgeController {
             BridgeState.log("backend reachable at \(backend.baseURL)")
         } catch {
             BridgeState.log("backend unreachable at \(backend.baseURL) — \(error.localizedDescription)")
+            // Laptop moved networks or IPs: find it over Bonjour instead of making
+            // someone retype an address on stage.
+            if let found = await Discovery.findReceiver(), found != backend.baseURL {
+                backend.setBaseURL(found)
+                BridgeState.log("found receiver via Bonjour at \(found)")
+                if (try? await backend.getStats()) != nil { return }
+            }
             BridgeState.log("if this persists: Settings ▸ Privacy & Security ▸ Local Network ▸ Vexo Bridge")
         }
     }

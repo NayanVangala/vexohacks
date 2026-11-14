@@ -1,0 +1,456 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		FB000000000000000000001D /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = FB000000000000000000001A /* MWDATCore */; };
+		FB000000000000000000001E /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = FB000000000000000000001B /* MWDATCamera */; };
+		FB000000000000000000001F /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = FB000000000000000000001C /* MWDATMockDevice */; };
+		FB00000000000000000000D1 /* MWDATDisplay in Frameworks */ = {isa = PBXBuildFile; productRef = FB00000000000000000000D2 /* MWDATDisplay */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		FB0000000000000000000021 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FB0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FB0000000000000000000004;
+			remoteInfo = VexoBridge;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		FB0000000000000000000006 /* VexoBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VexoBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FB0000000000000000000007 /* VexoBridgeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VexoBridgeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		FB0000000000000000000023 /* Exceptions for "VexoBridge" folder in "VexoBridge" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = FB0000000000000000000004 /* VexoBridge */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		FB0000000000000000000017 /* VexoBridge */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				FB0000000000000000000023 /* Exceptions for "VexoBridge" folder in "VexoBridge" target */,
+			);
+			path = VexoBridge;
+			sourceTree = "<group>";
+		};
+		FB0000000000000000000018 /* VexoBridgeTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = VexoBridgeTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		FB0000000000000000000009 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FB000000000000000000001D /* MWDATCore in Frameworks */,
+				FB000000000000000000001E /* MWDATCamera in Frameworks */,
+				FB000000000000000000001F /* MWDATMockDevice in Frameworks */,
+				FB00000000000000000000D1 /* MWDATDisplay in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FB000000000000000000000C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		FB0000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				FB0000000000000000000017 /* VexoBridge */,
+				FB0000000000000000000018 /* VexoBridgeTests */,
+				FB0000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FB0000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FB0000000000000000000006 /* VexoBridge.app */,
+				FB0000000000000000000007 /* VexoBridgeTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		FB0000000000000000000004 /* VexoBridge */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FB000000000000000000000F /* Build configuration list for PBXNativeTarget "VexoBridge" */;
+			buildPhases = (
+				FB0000000000000000000008 /* Sources */,
+				FB0000000000000000000009 /* Frameworks */,
+				FB000000000000000000000A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				FB0000000000000000000017 /* VexoBridge */,
+			);
+			name = VexoBridge;
+			packageProductDependencies = (
+				FB000000000000000000001A /* MWDATCore */,
+				FB000000000000000000001B /* MWDATCamera */,
+				FB000000000000000000001C /* MWDATMockDevice */,
+				FB00000000000000000000D2 /* MWDATDisplay */,
+			);
+			productName = VexoBridge;
+			productReference = FB0000000000000000000006 /* VexoBridge.app */;
+			productType = "com.apple.product-type.application";
+		};
+		FB0000000000000000000005 /* VexoBridgeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FB0000000000000000000010 /* Build configuration list for PBXNativeTarget "VexoBridgeTests" */;
+			buildPhases = (
+				FB000000000000000000000B /* Sources */,
+				FB000000000000000000000C /* Frameworks */,
+				FB000000000000000000000D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FB0000000000000000000020 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				FB0000000000000000000018 /* VexoBridgeTests */,
+			);
+			name = VexoBridgeTests;
+			packageProductDependencies = (
+			);
+			productName = VexoBridgeTests;
+			productReference = FB0000000000000000000007 /* VexoBridgeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		FB0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					FB0000000000000000000004 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					FB0000000000000000000005 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = FB0000000000000000000004;
+					};
+				};
+			};
+			buildConfigurationList = FB000000000000000000000E /* Build configuration list for PBXProject "VexoBridge" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = FB0000000000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				FB0000000000000000000019 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = FB0000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FB0000000000000000000004 /* VexoBridge */,
+				FB0000000000000000000005 /* VexoBridgeTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		FB000000000000000000000A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FB000000000000000000000D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		FB0000000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FB000000000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		FB0000000000000000000020 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FB0000000000000000000004 /* VexoBridge */;
+			targetProxy = FB0000000000000000000021 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		FB0000000000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		FB0000000000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		FB0000000000000000000013 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLIENT_TOKEN = 0;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6KRCDGYC5W;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = VexoBridge/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Vexo Bridge";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				META_APP_ID = 0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vexohacks.bridge;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		FB0000000000000000000014 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLIENT_TOKEN = 0;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6KRCDGYC5W;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = VexoBridge/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Vexo Bridge";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				META_APP_ID = 0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vexohacks.bridge;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		FB0000000000000000000015 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vexohacks.bridge.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VexoBridge.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/VexoBridge";
+			};
+			name = Debug;
+		};
+		FB0000000000000000000016 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vexohacks.bridge.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VexoBridge.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/VexoBridge";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		FB000000000000000000000E /* Build configuration list for PBXProject "VexoBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FB0000000000000000000011 /* Debug */,
+				FB0000000000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FB000000000000000000000F /* Build configuration list for PBXNativeTarget "VexoBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FB0000000000000000000013 /* Debug */,
+				FB0000000000000000000014 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FB0000000000000000000010 /* Build configuration list for PBXNativeTarget "VexoBridgeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FB0000000000000000000015 /* Debug */,
+				FB0000000000000000000016 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		FB0000000000000000000019 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/facebook/meta-wearables-dat-ios";
+			requirement = {
+				kind = exactVersion;
+				version = 0.7.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		FB000000000000000000001A /* MWDATCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FB0000000000000000000019 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCore;
+		};
+		FB000000000000000000001B /* MWDATCamera */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FB0000000000000000000019 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCamera;
+		};
+		FB000000000000000000001C /* MWDATMockDevice */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FB0000000000000000000019 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATMockDevice;
+		};
+		FB00000000000000000000D2 /* MWDATDisplay */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FB0000000000000000000019 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATDisplay;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = FB0000000000000000000001 /* Project object */;
+}

@@ -48,6 +48,8 @@
 	<string>Used only in testing, to stand in for the glasses camera with MockDeviceKit.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Scene sends what your glasses see and hear to the laptop on your network.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Scene uses your location to find places near you when you ask it to order something.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Scene records audio from your glasses microphone.</string>
 	<key>UIApplicationSceneManifest</key>

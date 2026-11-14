@@ -127,6 +127,112 @@ extension BackendClient {
 /// For endpoints whose response body we don't need.
 struct Ignored: Decodable {}
 
+// MARK: - Needs you, notes, activity (Srijan's backend: /inbox, /notes, /activity)
+
+/// One button on a waiting item: the server says exactly which call it makes.
+struct InboxAction: Decodable, Hashable, Sendable {
+    let label: String
+    let method: String
+    let path: String
+    let primary: Bool
+    let json: [String: String]?
+}
+
+/// Anything waiting on you: email, calendar event, order, notes offer, the agent's question, a payment,
+/// or a Follow-Through promise. Ids are numbers from Scene and strings from Follow-Through.
+struct InboxItem: Decodable, Identifiable, Sendable {
+    let type: String
+    let ref: String
+    let title: String
+    let body: String
+    let ts: Double
+    let actions: [InboxAction]
+    let link: String?
+    var id: String { "\(type)-\(ref)" }
+
+    enum CodingKeys: String, CodingKey { case type, id, title, body, ts, actions, link }
+
+    init(type: String, ref: String, title: String, body: String, ts: Double, actions: [InboxAction], link: String? = nil) {
+        (self.type, self.ref, self.title, self.body, self.ts, self.actions, self.link) = (type, ref, title, body, ts, actions, link)
+    }
+
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        type = try c.decode(String.self, forKey: .type)
+        ref = (try? c.decode(String.self, forKey: .id)) ?? (try? c.decode(Int.self, forKey: .id)).map(String.init) ?? "?"
+        title = try c.decode(String.self, forKey: .title)
+        body = (try? c.decode(String.self, forKey: .body)) ?? ""
+        ts = (try? c.decode(Double.self, forKey: .ts)) ?? 0
+        actions = (try? c.decode([InboxAction].self, forKey: .actions)) ?? []
+        link = try? c.decode(String.self, forKey: .link)
+    }
+}
+
+struct NoteSummary: Decodable, Identifiable, Sendable {
+    let id: Int
+    let summary: String
+    let ts: Double
+    let decisions: Int
+    let actionItems: Int
+    let slides: Int
+}
+
+struct NoteDetail: Decodable, Sendable {
+    struct Item: Decodable, Sendable { let text: String; let quote: String? }
+    let summary: String
+    let decisions: [String]
+    let actionItems: [Item]
+
+    enum CodingKeys: String, CodingKey { case summary, decisions, actionItems }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        summary = (try? c.decode(String.self, forKey: .summary)) ?? ""
+        decisions = (try? c.decode([String].self, forKey: .decisions)) ?? []
+        actionItems = (try? c.decode([Item].self, forKey: .actionItems)) ?? []
+    }
+}
+
+struct ActivityItem: Decodable, Identifiable, Sendable {
+    let id: Int
+    let kind: String
+    let text: String
+    let status: String?
+    let ts: Double
+}
+
+/// Follow-Through's state, just the parts the phone shows.
+private struct FTState: Decodable {
+    struct Item: Decodable { let id: String; let title: String; let quote: String?; let status: String; let action: String? }
+    let items: [Item]
+}
+
+extension BackendClient {
+    /// Run an inbox action exactly as the server described it (JSON body when it gave one).
+    func perform(_ a: InboxAction) async throws -> Data {
+        guard let url = URL(string: baseURL + a.path) else { throw BackendError.badURL(baseURL + a.path) }
+        var req = URLRequest(url: url)
+        req.httpMethod = a.method
+        req.timeoutInterval = 30
+        if let json = a.json {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: json)
+        }
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw BackendError.notHTTP }
+        guard (200..<300).contains(http.statusCode) else {
+            struct Detail: Decodable { let detail: String }
+            if let d = try? JSONDecoder().decode(Detail.self, from: data) { throw BackendError.server(d.detail) }
+            throw BackendError.httpStatus(http.statusCode, path: a.path)
+        }
+        return data
+    }
+
+    /// The server gives links as absolute URLs when PUBLIC_BASE_URL is set, else as paths.
+    func absolute(_ link: String) -> URL? {
+        URL(string: link.hasPrefix("http") ? link : baseURL + link)
+    }
+}
+
 // MARK: - Store
 
 @Observable
@@ -142,6 +248,9 @@ final class MemoryStore {
     private(set) var things: [Thing] = []
     private(set) var payments: [Payment] = []
     private(set) var today: Today?
+    private(set) var inbox: [InboxItem] = []       // Needs you: Scene's /inbox + Follow-Through's pending promises
+    private(set) var notes: [NoteSummary] = []
+    private(set) var activity: [ActivityItem] = []
     private(set) var online = false
     private(set) var lastAnswer: AskResult?
     private(set) var asking = false
@@ -233,6 +342,47 @@ final class MemoryStore {
         if let i = try? await i { things = i }
         if let p = try? await p { payments = p }
         if let d = try? await d, d != today { today = d }
+        await refreshInbox()
+    }
+
+    func refreshInbox() async {
+        async let ib: [InboxItem] = backend.get("/inbox")
+        async let n: [NoteSummary] = backend.get("/notes?limit=10")
+        async let a: [ActivityItem] = backend.get("/activity?limit=30")
+        async let ft: FTState = backend.get("/ft/api/state")
+        var items = (try? await ib) ?? inbox.filter { $0.type != "promise" }
+        if let ft = try? await ft {   // Follow-Through is optional: missing just means no promises
+            let now = Date().timeIntervalSince1970
+            items += ft.items.filter { $0.status == "pending" }.map { i in
+                InboxItem(type: "promise", ref: i.id, title: i.title, body: i.quote.map { "\u{201C}\($0)\u{201D}" } ?? "",
+                          ts: now - 1, actions: [
+                            InboxAction(label: "Approve", method: "POST", path: "/ft/api/items/\(i.id)/approve", primary: true, json: nil),
+                            InboxAction(label: "Not now", method: "POST", path: "/ft/api/items/\(i.id)/dismiss", primary: false, json: nil)])
+            }
+        }
+        inbox = items
+        if let n = try? await n { notes = n }
+        if let a = try? await a { activity = a }
+    }
+
+    /// One tap on an inbox button. Payments go through `approve` so the QR sheet opens.
+    func perform(_ action: InboxAction, on item: InboxItem) async {
+        if item.type == "payment", action.primary, let id = Int(item.ref) {
+            await approve(id)
+            return
+        }
+        do {
+            _ = try await backend.perform(action)
+            BridgeState.log("NEEDS YOU \(item.type) #\(item.ref): \(action.label)")
+        } catch {
+            BridgeState.logError("inbox action", error)
+            notice = "Couldn\u{2019}t \(action.label.lowercased()): \(error.localizedDescription)"
+        }
+        await refreshLists()
+    }
+
+    func noteDetail(_ id: Int) async -> NoteDetail? {
+        try? await backend.get("/notes/\(id)")
     }
 
     func payment(_ id: Int?) -> Payment? {

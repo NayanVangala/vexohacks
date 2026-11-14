@@ -34,6 +34,8 @@ final class BridgeController {
 
     /// Feed, tasks, things, payments. Drives the phone screens AND the glasses.
     let memory: MemoryStore
+    /// Phone GPS -> /location, for the ordering agent's "nearest" place.
+    private(set) lazy var location = LocationReporter(backend: backend)
     private let player = AudioPlayer()
 
     #if DEBUG
@@ -182,6 +184,7 @@ final class BridgeController {
         BridgeState.log("microphone permission: \(granted ? "granted" : "DENIED")")
         await pingBackend()
         memory.startPolling()
+        location.start()
 
         #if DEBUG
         // Unattended MockDeviceKit runs (docs/VERIFICATION.md):

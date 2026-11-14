@@ -26,6 +26,10 @@ struct RootView: View {
             TodayView(controller: controller, replayIntro: { seenIntro = false })
                 .tabItem { Label("Today", systemImage: "sparkle") }
                 .tag("today")
+            NeedsYouView(store: store)
+                .tabItem { Label("Needs you", systemImage: "tray.full") }
+                .badge(store.inbox.count)
+                .tag("needs")
             TasksView(store: store)
                 .tabItem { Label("Tasks", systemImage: "checklist") }
                 .badge(store.tasks.count)
@@ -85,7 +89,8 @@ private struct TodayView: View {
                 }
                 .padding(.horizontal, -16)   // cards run edge to edge like the reference
                 .padding(.top, 6)
-                FeedList(cards: store.cards)
+                NotesSection(store: store)
+                ActivitySection(store: store)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
@@ -263,8 +268,12 @@ private struct NeedsYouCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Eyebrow(pending == nil ? "All clear" : "Needs you")
-            if let p = pending {
+            if pending != nil || store.inbox.isEmpty {
+                Eyebrow(pending == nil ? "All clear" : "Needs you")
+            }
+            if pending == nil, let item = store.inbox.first(where: { $0.type != "payment" }) {
+                InboxCard(item: item, store: store)
+            } else if let p = pending {
                 HStack(alignment: .center, spacing: 10) {
                     Text(p.amountText).font(Theme.number(44)).foregroundStyle(Theme.ink)
                     star

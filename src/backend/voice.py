@@ -25,6 +25,14 @@ ELEVEN_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
 
 # Whisper invents these on silence. ponytail: fixed list; widen it from real logs if more show up.
 HALLUCINATIONS = {"thank you", "thanks for watching", "you", "bye", "thank you for watching", "okay"}
+# Phrases Whisper invents on near-silence (YouTube outros). Seen live: "Share this video with your
+# friends on social media" became a task. Any chunk containing one of these is dropped.
+PHANTOM_PHRASES = ("share this video", "like and subscribe", "subscribe to", "see you in the next video",
+                   "thanks for watching", "thank you for watching", "please subscribe", "don't forget to subscribe")
+
+# Below this RMS (16-bit samples) a chunk is room tone, not speech: don't transcribe it at all.
+# Measured on the iPhone mic: room 12-25, speech in the hundreds. Override with SCENE_SILENCE_RMS.
+SILENCE_RMS = float(os.environ.get("SCENE_SILENCE_RMS", "45"))
 
 _pending: str | None = None
 _until = 0.0
@@ -32,7 +40,16 @@ _cooldown_until = 0.0
 
 
 def is_noise(text: str) -> bool:
-    return re.sub(r"[^a-z ]", "", text.lower()).strip() in HALLUCINATIONS
+    t = re.sub(r"[^a-z' ]", "", text.lower()).strip()
+    return t.replace("'", "") in HALLUCINATIONS or any(p in t for p in PHANTOM_PHRASES)
+
+
+def is_silent(wav: bytes) -> bool:
+    """RMS of a 16-bit PCM WAV (header skipped). Silent chunks never reach Whisper."""
+    import array
+    import math
+    a = array.array("h", wav[44:len(wav) - (len(wav) - 44) % 2])
+    return bool(a) and math.sqrt(sum(x * x for x in a) / len(a)) < SILENCE_RMS   # no samples: can't tell, keep it
 
 
 def heard(text: str, now: float | None = None) -> str | None:

@@ -64,9 +64,12 @@
     const open = state.ft.items.filter(i => i.status === 'pending' || i.status === 'needs_review').slice(0, 4);
     const items = open.map(i => `<button class="item" data-act="ft-open" data-id="${esc(i.id)}">${esc(i.title)}
       <small>${esc(KIND[i.action] || i.action)}${i.due_local ? ' · ' + esc(when(i.due_local)) : ''}${i.status === 'needs_review' ? ' · needs review' : ''}</small></button>`).join('');
+    // "Approve all" covers verified, pending items only: anything that needs review stays manual.
+    const ready = state.ft.items.filter(i => i.status === 'pending').length;
     return `<div class="eyebrow">Follow-ups</div>
       <div class="list">${items || `<div class="empty">${state.ft.online ? 'Nothing to follow up.' : 'Follow-Through isn’t running on the laptop.'}</div>`}</div>
-      <div class="row nav"><button data-view="home">Back</button></div>`;
+      <div class="row nav">${ready > 1 ? `<button class="primary" data-act="ft-approve-all">Approve all ${ready}</button>` : ''}
+        <button data-view="home">Back</button></div>`;
   };
 
   views.followup = () => {
@@ -80,6 +83,17 @@
   actions['ft-dismiss'] = async ({ id }) => {
     await api(`/ft/api/items/${encodeURIComponent(id)}/dismiss`, 'POST');
     state.view = 'followups';
+  };
+  actions['ft-approve-all'] = async () => {
+    const ready = state.ft.items.filter(i => i.status === 'pending');
+    const done = [];
+    for (const i of ready) {   // one at a time: each approval is its own audited action
+      try { done.push(await api(`/ft/api/items/${encodeURIComponent(i.id)}/approve`, 'POST')); } catch {}
+    }
+    state.ft.last = done.length ? { title: `${done.length} of ${ready.length} approved`, status: 'done',
+      result: done.map(d => d.title).join(' · ') +
+        (done.every(d => d.status === 'drafted' || /draft/i.test(d.result)) ? '. Drafts only, nothing was sent.' : '') } : null;
+    state.view = 'home';
   };
   actions['ft-approve'] = async ({ id }) => {
     state.ft.last = await api(`/ft/api/items/${encodeURIComponent(id)}/approve`, 'POST');

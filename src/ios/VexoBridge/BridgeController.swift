@@ -24,7 +24,7 @@ final class BridgeController {
     // Identical to Android so both bridges produce the same server-side cadence.
     // The server cannot tell the two bridges apart, and that is the point.
 
-    static let frameIntervalSeconds: CFTimeInterval = 2.5
+    static let frameIntervalSeconds: CFTimeInterval = 0.5   // every frame at the glasses' 2 fps; the server drops frames rather than lag
     static let uploadDrainSeconds: UInt64 = 3
 
     // MARK: - Collaborators

@@ -324,6 +324,15 @@ struct GlassesView: View {
                 .disabled(state.isRunning)
                 #endif
 
+                Toggle("Use iPhone microphone", isOn: Binding(
+                    get: { GlassesAudioRecorder.usePhoneMic },
+                    set: { UserDefaults.standard.set($0, forKey: "usePhoneMic") }))
+                    .font(.subheadline)
+                    .tint(Theme.action)
+                    .disabled(state.isRunning)
+                Text("Recommended: the glasses mic goes silent while the camera streams. Takes effect on Start.")
+                    .font(.caption).foregroundStyle(Theme.inkSoft)
+
                 HStack {
                     Text("Newest first").font(.caption).foregroundStyle(Theme.inkSoft)
                     Spacer()

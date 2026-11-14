@@ -198,13 +198,19 @@ final class GlassesAudioRecorder: @unchecked Sendable {
     /// as a `.bluetoothHFP` port to a 3P app *while a DAT camera session is
     /// streaming* is the highest-risk unknown in this build. Dump this log line
     /// before, during, and after starting the stream; that single line resolves it.
+    /// Measured 2026-11-14 on Ray-Ban Display: while the DAT camera stream runs, the glasses'
+    /// HFP mic delivers all-zero samples (the camera and HFP share one Bluetooth radio). So the
+    /// iPhone mic is the default; Diagnostics > "Use iPhone microphone" off tries the glasses mic.
+    static var usePhoneMic: Bool { UserDefaults.standard.object(forKey: "usePhoneMic") as? Bool ?? true }
+
     @discardableResult
     private func selectPreferredInput() -> AVAudioSessionPortDescription? {
         let session = AVAudioSession.sharedInstance()
         let inputs = session.availableInputs ?? []
 
         let hfp = inputs.first { $0.portType == .bluetoothHFP }
-        let chosen = hfp ?? inputs.first { $0.portType == .builtInMic }
+        let builtIn = inputs.first { $0.portType == .builtInMic }
+        let chosen = Self.usePhoneMic ? (builtIn ?? hfp) : (hfp ?? builtIn)
 
         guard let chosen else {
             BridgeState.log("!! no audio input ports at all")
@@ -223,7 +229,9 @@ final class GlassesAudioRecorder: @unchecked Sendable {
                 "\($0.portName)[\($0.portType.rawValue)]"
             }.joined(separator: ", "))
 
-            if hfp == nil {
+            if chosen.portType == .builtInMic && hfp != nil {
+                BridgeState.log("using \(chosen.portName): glasses mic goes silent while the camera streams")
+            } else if hfp == nil {
                 // The audio analogue of Android's "degrade to video-only" rule.
                 // Demo-quality degradation, not a functional one (§11.3).
                 // Expected in mock mode: with no glasses connected as an audio

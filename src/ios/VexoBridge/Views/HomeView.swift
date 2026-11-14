@@ -619,10 +619,9 @@ private struct IntroView: View {
 
             // The big star blooms in behind the words and tumbles toward whichever word you tap. Not touchable,
             // so it never steals a tap from the words or Get started.
-            Star3D(color: Theme.star, depth: 0.16, roll: roll)
+            Star3D(color: Theme.star, spin: false, depth: 0.16, roll: roll, upright: true)
                 .frame(width: 560, height: 560)
                 .scaleEffect(bloom ? 1 : 0.25)
-                .rotationEffect(.degrees(bloom ? 0 : -45))
                 .position(x: 150, y: 470)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)

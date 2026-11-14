@@ -100,9 +100,28 @@ struct FourPointStar: Shape {
 }
 
 enum LogoStar {
-    /// Proportions from scripts/render-icon.swift: long rays r, pinch 0.14; short rays 0.585 r at 45 degrees, pinch 0.10.
+    /// Proportions from scripts/render-icon.swift: long rays r, pinch 0.14.
     static func long(in r: CGRect) -> Path { rays(in: r, scale: 1, pinch: 0.14, turn: 0) }
-    static func short(in r: CGRect) -> Path { rays(in: r, scale: 0.585, pinch: 0.10, turn: .pi / 4) }
+
+    /// The four diagonal rays, floating free: thin needles between the long arms that never touch the star.
+    static func short(in r: CGRect) -> Path {
+        let c = CGPoint(x: r.midX, y: r.midY)
+        let rx = r.width / 2, ry = r.height / 2
+        var p = Path()
+        for i in 0..<4 {
+            let a = CGFloat(i) * .pi / 2 + .pi / 4
+            let dx = cos(a), dy = sin(a)
+            func at(_ d: CGFloat, _ side: CGFloat) -> CGPoint {   // d along the ray, side across it
+                CGPoint(x: c.x + (dx * d - dy * side) * rx, y: c.y + (dy * d + dx * side) * ry)
+            }
+            let inner = at(0.36, 0), outer = at(0.66, 0), w: CGFloat = 0.05
+            p.move(to: inner)
+            p.addQuadCurve(to: outer, control: at(0.48, w))
+            p.addQuadCurve(to: inner, control: at(0.48, -w))
+            p.closeSubpath()
+        }
+        return p
+    }
 
     private static func rays(in r: CGRect, scale: CGFloat, pinch k: CGFloat, turn: CGFloat) -> Path {
         let c = CGPoint(x: r.midX, y: r.midY)

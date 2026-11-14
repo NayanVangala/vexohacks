@@ -16,6 +16,8 @@ struct Star3D: UIViewRepresentable {
     var spin = true
     /// 0...1: how thick the extrusion is relative to the star's width.
     var depth: CGFloat = 0.22
+    /// Bump to tumble the star one full turn: up when it goes up, down when it goes down.
+    var roll = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -33,13 +35,22 @@ struct Star3D: UIViewRepresentable {
     }
 
     func updateUIView(_ view: SCNView, context: Context) {
-        star(in: view)?.geometry?.firstMaterial?.diffuse.contents = UIColor(color)
+        star(in: view)?.childNodes.first?.geometry?.firstMaterial?.diffuse.contents = UIColor(color)
+        let c = context.coordinator
+        guard roll != c.lastRoll else { return }
+        defer { c.lastRoll = roll }
+        guard !reduceMotion, let tilt = view.scene?.rootNode.childNode(withName: "tilt", recursively: true) else { return }
+        // +x tips the top toward you (the face rolls down); -x rolls it up.
+        let turn = SCNAction.rotateBy(x: roll > c.lastRoll ? .pi * 2 : -.pi * 2, y: 0, z: 0, duration: 0.8)
+        turn.timingMode = .easeInEaseOut
+        tilt.runAction(turn, forKey: "roll")
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(reduceMotion: reduceMotion) }
 
     final class Coordinator: NSObject {
         weak var view: SCNView?
+        var lastRoll = 0
         let reduceMotion: Bool
         init(reduceMotion: Bool) { self.reduceMotion = reduceMotion }
 
@@ -85,6 +96,7 @@ struct Star3D: UIViewRepresentable {
         star.addChildNode(SCNNode(geometry: longRays))
         star.addChildNode(SCNNode(geometry: shortRays))
         let tilt = SCNNode()
+        tilt.name = "tilt"
         tilt.eulerAngles = SCNVector3(-0.14, 0.3, 0.06)   // resting pose: a little turned, so the depth reads
         tilt.addChildNode(star)
         scene.rootNode.addChildNode(tilt)

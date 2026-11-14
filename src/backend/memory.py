@@ -145,14 +145,14 @@ def _run(q: queue.Queue) -> None:
 def on_frame(path: Path) -> None:
     global _last_frame
     now = time.time()
-    if not ENABLED or now - _last_frame < FRAME_EVERY_S:
+    if not ENABLED or now - _last_frame < FRAME_EVERY_S or voice.paused():
         return
     _last_frame = now
     submit("frame", process_frame, path)
 
 
 def on_audio(path: Path) -> None:
-    if ENABLED:
+    if ENABLED and not voice.paused():
         submit("audio", process_audio, path)
 
 

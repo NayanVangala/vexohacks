@@ -42,6 +42,7 @@ async function poll() {
     let settings;
     [state.tasks, state.things, state.payments, settings] = await Promise.all([api('/tasks'), api('/items'), api('/payments'), api('/settings')]);
     state.mode = settings.output;   // null until the wearer picks: render() then asks
+    state.settings = settings;
     state.online = true;
     await Promise.all(pollers.map(p => p().catch(err => report('poller: ' + err.message))));
   } catch { state.online = false; }
@@ -165,6 +166,7 @@ function recent() {
 }
 
 let lastHTML = '';
+let renderedView = null;
 /** How Scene talks to you. Asked once (first open), changeable from the header pill. */
 const MODES = [
   ['cards', 'Cards', 'Answers and approvals appear here. The laptop stays quiet.'],
@@ -181,19 +183,40 @@ function mode() {
     ${first ? '' : '<div class="row nav"><button data-view="home">Back</button></div>'}`;
 }
 
+/** Settings: each row cycles its value on a pinch. Saved on the laptop (except text size, per device). */
+const NEXT = (list, cur) => list[(list.indexOf(cur) + 1) % list.length];
+const NAMES = { cards: 'Cards', voice: 'Speaking', both: 'Both', glasses: 'Glasses', laptop: 'Laptop' };
+let largeText = (() => { try { return localStorage.getItem('scene.largeText') === '1'; } catch { return false; } })();
+document.documentElement.classList.toggle('large', largeText);
+
+function settings() {
+  const st = state.settings || {};
+  const row = (act, name, value, hint) =>
+    `<button class="item" data-act="${act}">${name}: ${value}<small>${hint}</small></button>`;
+  return `<div class="eyebrow">Settings</div><div class="list">
+    ${row('set-output', 'Tell me with', NAMES[state.mode] || 'Both', 'Cards on the display, speaking, or both')}
+    ${row('set-speak-on', 'Speak on', NAMES[st.speak_on] || 'Glasses', 'Where Scene’s voice plays')}
+    ${row('set-text', 'Text size', largeText ? 'Large' : 'Normal', 'Easier reading on the lens')}
+    ${row('set-paused', 'Remembering', st.paused ? 'Paused' : 'On', st.paused ? 'Camera and mic are ignored' : 'Pinch to pause for privacy')}
+  </div><div class="row nav"><button data-view="home">Back</button></div>`;
+}
+
 function render() {
-  const label = { cards: 'Cards', voice: 'Speaking', both: 'Cards + voice' }[state.mode] || 'Choose';
-  const header = `<header>${STAR}<h1>Scene</h1><button class="pill" data-view="mode">${label}</button><span class="status"><span class="dot ${state.online ? '' : 'off'}"></span>${state.online ? 'Live' : 'Offline'}</span></header>`;
+  const header = `<header>${STAR}<h1>Scene</h1><button class="pill" data-view="settings">Settings</button><span class="status"><span class="dot ${state.online ? (state.settings?.paused ? 'paused' : '') : 'off'}"></span>${!state.online ? 'Offline' : state.settings?.paused ? 'Paused' : 'Live'}</span></header>`;
   const firstRun = state.online && state.mode == null;
-  const body = firstRun ? mode() : ({ home, tasks, things, ask, recent, mode, ...views }[state.view] || home)();
+  const body = firstRun ? mode() : ({ home, tasks, things, ask, recent, mode, settings, ...views }[state.view] || home)();
   const html = header + (state.note ? `<div class="body">${esc(state.note)}</div>` : '') + body;
   if (html === lastHTML) return;   // don't re-render (and steal focus) when nothing changed
   const key = el => (el?.dataset?.act || '') + (el?.dataset?.id || '') + (el?.dataset?.view || '') + (el?.dataset?.q || '');
   const focusKey = key(document.activeElement);
   $app.innerHTML = lastHTML = html;
   const focusables = [...$app.querySelectorAll('button, .item')];
-  const keep = focusables.find(el => key(el) === focusKey);
-  (keep || focusables[0])?.focus();
+  // Keep the focused control only when the same screen re-renders (a poll); a new screen starts fresh.
+  const sameScreen = renderedView === (firstRun ? 'first-run' : state.view);
+  renderedView = firstRun ? 'first-run' : state.view;
+  const keep = sameScreen ? focusables.find(el => key(el) === focusKey) : null;
+  // New screen: land on its first control, never the header's Settings button.
+  (keep || focusables.find(el => !el.closest('header')) || focusables[0])?.focus();
 }
 
 $app.addEventListener('click', async e => {
@@ -205,6 +228,15 @@ $app.addEventListener('click', async e => {
   try {
     if (actions[act]) await actions[act](el.dataset);
     if (act === 'set-mode') { await api('/settings', 'POST', { output: q }); state.mode = q; state.view = 'home'; }
+    if (act === 'set-output') state.settings = await api('/settings', 'POST', { output: NEXT(['cards', 'voice', 'both'], state.mode || 'both') });
+    if (act === 'set-speak-on') state.settings = await api('/settings', 'POST', { speak_on: NEXT(['glasses', 'laptop', 'both'], state.settings?.speak_on || 'glasses') });
+    if (act === 'set-paused') state.settings = await api('/settings', 'POST', { paused: String(!state.settings?.paused) });
+    if (act === 'set-text') {
+      largeText = !largeText;
+      document.documentElement.classList.toggle('large', largeText);
+      try { localStorage.setItem('scene.largeText', largeText ? '1' : '0'); } catch {}
+    }
+    if (act?.startsWith('set-') && state.settings) state.mode = state.settings.output;
     if (act === 'approve') { await api(`/payments/${id}/approve`, 'POST'); state.note = 'Requested. Show the QR on your phone.'; }
     if (act === 'reject') await api(`/payments/${id}/reject`, 'POST');
     if (act === 'done' && id) await api(`/tasks/${id}/done`, 'POST');

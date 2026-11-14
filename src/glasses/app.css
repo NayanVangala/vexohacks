@@ -95,3 +95,12 @@ header .pill { margin-left: 6px; padding: 5px 14px; font-size: 16px; font-weight
   border-color: var(--line); color: var(--soft); }
 header .pill:focus { color: var(--ink); }
 .title + .list { margin-top: 4px; }
+
+/* Paused (privacy): amber dot. */
+.dot.paused { background: var(--butter); box-shadow: 0 0 8px var(--butter); }
+/* Settings > Text size: Large. Scales the type, keeps the layout. */
+html.large body { font-size: 28px; }
+html.large .title { font-size: 36px; }
+html.large .item { font-size: 27px; }
+html.large .item small { font-size: 20px; }
+html.large .grid button { font-size: 23px; }

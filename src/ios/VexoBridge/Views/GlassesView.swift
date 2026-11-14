@@ -79,7 +79,6 @@ struct GlassesView: View {
             }
             Spacer(minLength: 0)
             ZStack {
-                StarGlow().scaleEffect(1.6)
                 Star3D(color: Theme.star)
                 Twinkles(color: .white)
             }

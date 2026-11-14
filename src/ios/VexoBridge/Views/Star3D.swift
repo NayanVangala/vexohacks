@@ -58,13 +58,18 @@ struct Star3D: UIViewRepresentable {
         let scene = SCNScene()
         scene.background.contents = UIColor.clear
 
-        // Geometry: the 2D star outline, extruded and rounded off.
-        let outline = FourPointStar(pinch: 0.16).path(in: CGRect(x: -1, y: -1, width: 2, height: 2))
-        let bezier = UIBezierPath(cgPath: outline.cgPath)
-        bezier.flatness = 0.004
-        let shape = SCNShape(path: bezier, extrusionDepth: depth * 2)
-        shape.chamferRadius = depth * 0.2
-        shape.chamferMode = .both
+        // Geometry: the logo star as two extrusions, long rays in front of the shorter, slimmer diagonals.
+        let box = CGRect(x: -1, y: -1, width: 2, height: 2)
+        func extrude(_ outline: Path, depth d: CGFloat) -> SCNShape {
+            let bezier = UIBezierPath(cgPath: outline.cgPath)
+            bezier.flatness = 0.004
+            let shape = SCNShape(path: bezier, extrusionDepth: d * 2)
+            shape.chamferRadius = d * 0.2
+            shape.chamferMode = .both
+            return shape
+        }
+        let longRays = extrude(LogoStar.long(in: box), depth: depth)
+        let shortRays = extrude(LogoStar.short(in: box), depth: depth * 0.6)
 
         let material = SCNMaterial()
         material.lightingModel = .physicallyBased
@@ -72,10 +77,13 @@ struct Star3D: UIViewRepresentable {
         material.roughness.contents = 0.32
         material.metalness.contents = 0.05
         material.clearCoat.contents = 0.6
-        shape.materials = [material]
+        longRays.materials = [material]
+        shortRays.materials = [material]
 
-        let star = SCNNode(geometry: shape)
+        let star = SCNNode()
         star.name = "star"
+        star.addChildNode(SCNNode(geometry: longRays))
+        star.addChildNode(SCNNode(geometry: shortRays))
         let tilt = SCNNode()
         tilt.eulerAngles = SCNVector3(-0.14, 0.3, 0.06)   // resting pose: a little turned, so the depth reads
         tilt.addChildNode(star)

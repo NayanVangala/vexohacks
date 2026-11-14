@@ -125,8 +125,8 @@ def test_get_notes_unknown_is_none(env):
 
 
 def test_email_action_item_pushes_email_card_not_task_card(env, monkeypatch):
-    import emailer
-    emailer._drafts.clear()
+    import outbox
+    outbox._drafts.clear()
     monkeypatch.setenv("DEMO_EMAIL_TO", "ultra@example.com")
     monkeypatch.setattr(models, "make_notes", lambda t, s: {"summary": "Sync.", "decisions": [], "action_items": [
         {"text": "Send budget to Priya", "quote": "I will send the budget to Priya", "action": "email",
@@ -138,5 +138,20 @@ def test_email_action_item_pushes_email_card_not_task_card(env, monkeypatch):
     assert cards("task") == []
     card = cards("email")[0]
     assert card["title"] == "Email Priya?" and "Budget" in card["body"]
-    d = emailer.get(card["ref"])
+    d = outbox.get(card["ref"])
     assert d["status"] == "proposed" and d["to"] == "ultra@example.com"      # nothing sent yet
+
+
+def test_calendar_action_item_pushes_calendar_card(env, monkeypatch):
+    import outbox
+    outbox._drafts.clear()
+    monkeypatch.setattr(models, "make_notes", lambda t, s: {"summary": "Sync.", "decisions": [], "action_items": [
+        {"text": "Demo sync with Nayan", "quote": "demo sync on Friday at five", "action": "calendar",
+         "start": "2026-11-20T17:00", "duration_min": 45}]})
+    three(MEETING)
+    memory.answer_offer(cards("offer")[0]["ref"], True)
+    audio(monkeypatch, "Nayan: let's do the demo sync on Friday at five")
+    audio(monkeypatch, "stop notes")
+    card = cards("calendar")[0]
+    assert card["title"] == "Add to calendar?" and "Demo sync with Nayan" in card["body"] and "5:00 PM" in card["body"]
+    assert outbox.get(card["ref"])["status"] == "proposed" and cards("task") == []

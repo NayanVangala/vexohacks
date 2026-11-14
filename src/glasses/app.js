@@ -74,6 +74,11 @@ function home() {
       <div class="title">${esc(s.card.body)}</div>
       <div class="row"><button class="primary" data-act="email-send" data-id="${s.card.ref}" data-card="${s.card.id}">Send</button>
       <button data-act="email-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
+  } else if (s.kind === 'calendar') {
+    hero = `<div class="card payment"><div class="eyebrow">${esc(s.card.title)}</div>
+      <div class="title">${esc(s.card.body)}</div>
+      <div class="row"><button class="primary" data-act="event-add" data-id="${s.card.ref}" data-card="${s.card.id}">Add it</button>
+      <button data-act="event-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
   } else if (s.kind === 'task') {
     hero = `<div class="card task"><div class="eyebrow">New task</div>
       <div class="title">${esc(s.card.body)}</div>
@@ -156,6 +161,11 @@ $app.addEventListener('click', async e => {
       const d = await api(`/emails/${id}/send`, 'POST');
       state.note = d.status === 'sent' ? 'Sent. ' + d.result : d.status === 'drafted' ? d.result : 'Not sent: ' + d.result;
     }
+    if (act === 'event-add') {
+      const d = await api(`/events/${id}/add`, 'POST');
+      state.note = d.status === 'sent' ? d.result : d.status === 'drafted' ? d.result : 'Not added: ' + d.result;
+    }
+    if (act === 'event-no') await api(`/events/${id}/dismiss`, 'POST').catch(() => {});
     if (act === 'email-no') await api(`/emails/${id}/dismiss`, 'POST').catch(() => {});
     if (act === 'clear-answer') { state.answer = null; }
     if (act === 'ask') {

@@ -21,9 +21,10 @@ import re
 import threading
 import time
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 
-import emailer
+import outbox
 import models
 import notes
 import payments
@@ -280,8 +281,12 @@ def finish_notes() -> int | None:
     for a in out["action_items"]:
         tid = add("task", a["text"], status="open")
         if a.get("action") == "email":  # still a task, but the lens offers to send the email
-            d = emailer.draft(a.get("to", ""), a["subject"], a["body"], a["quote"])
+            d = outbox.draft(a.get("to", ""), a["subject"], a["body"], a["quote"])
             push_card("email", f"Email {d['to_name'] or 'them'}?", f"{d['subject']}: {d['body']}", ref=d["id"])
+        elif a.get("action") == "calendar":
+            d = outbox.draft_event(a["text"], a["start"], a["duration_min"], a["quote"])
+            when = datetime.strptime(a["start"], "%Y-%m-%dT%H:%M").strftime("%a %b %-d, %-I:%M %p")
+            push_card("calendar", "Add to calendar?", f"{a['text']} · {when}", ref=d["id"])
         else:
             push_card("task", "New task", a["text"], ref=tid)
     summary = out["summary"] or "Meeting notes"

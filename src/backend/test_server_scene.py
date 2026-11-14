@@ -57,12 +57,23 @@ def test_dev_scene_and_line_when_flag_set(monkeypatch):
 
 
 def test_email_send_and_dismiss_routes(monkeypatch):
-    import emailer
-    emailer._drafts.clear()
-    d = emailer.draft("Priya", "Budget", "Hi.", "send the budget to Priya")
-    monkeypatch.setattr(emailer, "send", lambda i: {**emailer._drafts[i], "status": "sent", "result": "Emailed"})
+    import outbox
+    outbox._drafts.clear()
+    d = outbox.draft("Priya", "Budget", "Hi.", "send the budget to Priya")
+    monkeypatch.setattr(outbox, "send", lambda i: {**outbox._drafts[i], "status": "sent", "result": "Emailed"})
     assert c.post(f"/emails/{d['id']}/send").json()["status"] == "sent"
     assert c.post("/emails/999/send").status_code == 404
     assert c.post(f"/emails/{d['id']}/dismiss").json()["status"] == "dismissed"
     assert c.post(f"/emails/{d['id']}/dismiss").status_code == 409
     assert c.post("/emails/999/dismiss").status_code == 404
+
+
+def test_event_routes_use_the_same_outbox(monkeypatch):
+    import outbox
+    outbox._drafts.clear()
+    d = outbox.draft_event("Demo sync", "2026-11-20T17:00", 30, "q")
+    monkeypatch.setattr(outbox, "send", lambda i: {**outbox._drafts[i], "status": "sent", "result": "Calendar event created"})
+    assert c.post(f"/events/{d['id']}/add").json()["status"] == "sent"
+    assert c.post("/events/999/add").status_code == 404
+    assert c.post(f"/events/{d['id']}/dismiss").json()["status"] == "dismissed"
+    assert c.post(f"/events/{d['id']}/dismiss").status_code == 409

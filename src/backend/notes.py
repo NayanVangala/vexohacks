@@ -4,6 +4,7 @@ or on a saved slide (same rule as memory.quoted). Pure logic apart from the one 
 """
 
 import re
+from datetime import datetime
 from dataclasses import dataclass, field
 
 import models
@@ -77,6 +78,14 @@ def stop() -> Session | None:
     return s
 
 
+def _valid_start(v) -> bool:
+    try:
+        datetime.strptime(v, "%Y-%m-%dT%H:%M")
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 def build(session: Session, make=models.make_notes) -> dict:
     """Notes from a finished session. Action items survive only with a quote found in the transcript or a slide."""
     transcript = "\n".join(session.lines)
@@ -92,6 +101,8 @@ def build(session: Session, make=models.make_notes) -> dict:
             keep = {"text": item["text"], "quote": item["quote"]}
             if item.get("action") == "email" and item.get("subject") and item.get("body"):
                 keep.update(action="email", to=item.get("to", ""), subject=item["subject"], body=item["body"])
+            if item.get("action") == "calendar" and _valid_start(item.get("start")):
+                keep.update(action="calendar", start=item["start"], duration_min=int(item.get("duration_min") or 30))
             kept.append(keep)
     return {"summary": out.get("summary", ""), "decisions": list(out.get("decisions", [])),
             "action_items": kept, "slides": session.slides}

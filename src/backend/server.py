@@ -31,7 +31,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-import emailer
+import outbox
 import memory
 import models
 import notes
@@ -236,7 +236,7 @@ async def notes_get(note_id: int):
 async def email_send(draft_id: int):
     """The glasses' Send button: the human-in-the-loop gate. Goes to DEMO_EMAIL_TO only."""
     try:
-        return await run_in_threadpool(emailer.send, draft_id)
+        return await run_in_threadpool(outbox.send, draft_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="no such draft")
     except ValueError as e:
@@ -246,9 +246,30 @@ async def email_send(draft_id: int):
 @app.post("/emails/{draft_id}/dismiss")
 async def email_dismiss(draft_id: int):
     try:
-        return emailer.dismiss(draft_id)
+        return outbox.dismiss(draft_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="no such draft")
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/events/{draft_id}/add")
+async def event_add(draft_id: int):
+    """The glasses' Add to calendar button. Creates the event only when the executor confirms."""
+    try:
+        return await run_in_threadpool(outbox.send, draft_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="no such event")
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/events/{draft_id}/dismiss")
+async def event_dismiss(draft_id: int):
+    try:
+        return outbox.dismiss(draft_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="no such event")
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -295,7 +316,7 @@ async def log_visitors(request: Request, call_next):
     """Record every non-API visitor (path + user agent): shows whether the glasses fetch anything at all."""
     response = await call_next(request)
     path = request.url.path
-    if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log", "/frames", "/offers", "/notes", "/emails", "/dev")):
+    if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log", "/frames", "/offers", "/notes", "/emails", "/events", "/dev")):
         with open(DATA_DIR / "glasses.log", "a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {request.method} {path} -> {response.status_code} "
                     f"ua={request.headers.get('user-agent', '?')[:160]}\n")

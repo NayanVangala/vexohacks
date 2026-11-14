@@ -80,7 +80,8 @@ curl -s -X POST :8001/notes/stop                          # {"notes": <id>}, the
 (Send / Not now). Send goes through the Follow-Through executor (`EXECUTOR_URL`, `EXECUTOR_TOKEN`) and the
 recipient is always `DEMO_EMAIL_TO`, never the person named. "Sent" shows only when the executor
 confirms; with no executor you get a Gmail draft link and "Nothing was sent". Set those three env vars
-in the shell that runs the backend.
+in `src/backend/.env`. A meeting agreed with a real day and time becomes an "Add to calendar?" card the
+same way (`/events/<id>/add`); a vague time ("sometime") stays a plain task.
 
 Tuning (env): `SCENE_NEED_FRAMES` (3), `SCENE_MIN_CONF` (0.6), `SCENE_SHOWN_COOLDOWN_S` (600),
 `SCENE_DECLINED_COOLDOWN_S` (1800), `SCENE_OFFER_EXPIRE_S` (60). Design:

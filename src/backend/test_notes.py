@@ -104,3 +104,17 @@ def test_build_keeps_email_fields_only_when_complete():
     a, b, c = out["action_items"]
     assert (a["action"], a["to"], a["subject"]) == ("email", "Priya", "Budget")
     assert "action" not in b and "action" not in c               # incomplete email stays a plain task
+
+
+def test_build_keeps_calendar_fields_only_with_a_real_start():
+    notes.start(0)
+    notes.add_line("Nayan: let's have the demo sync on Friday at five, and some other time we should chat too.")
+    s = notes.stop()
+    out = notes.build(s, make=lambda t, sl: {"summary": "x", "decisions": [], "action_items": [
+        {"text": "Demo sync with Nayan", "quote": "demo sync on Friday at five", "action": "calendar",
+         "start": "2026-11-20T17:00", "duration_min": 45},
+        {"text": "Chat sometime", "quote": "some other time we should chat too", "action": "calendar",
+         "start": "sometime", "duration_min": 30}]})
+    a, b = out["action_items"]
+    assert (a["action"], a["start"], a["duration_min"]) == ("calendar", "2026-11-20T17:00", 45)
+    assert "action" not in b                                    # vague time stays a plain task

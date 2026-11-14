@@ -53,7 +53,8 @@ Empty lists if nothing. Ignore small talk."""
 
 NOTES_PROMPT = """You turn a meeting transcript (heard by smart glasses) and the text of slides shown into notes.
 Return JSON: {"summary": str, "decisions": [str],
-              "action_items": [{"text": str, "quote": str, "action": str, "to": str, "subject": str, "body": str}]}
+              "action_items": [{"text": str, "quote": str, "action": str, "to": str, "subject": str, "body": str,
+                                "start": str, "duration_min": number}]}
 - summary: at most 3 plain sentences.
 - decisions: things that were decided, each one short.
 - action_items: things someone committed to do. text = imperative, self-contained ("Send the budget to Priya").
@@ -61,7 +62,10 @@ Return JSON: {"summary": str, "decisions": [str],
   Items whose quote is not in the transcript or slides are thrown away, so never paraphrase it.
   action = "email" when the item is sending something (a file, an update, a reply) to a named person, else "todo".
   For email: to = that person's name, subject = short, body = 2 to 4 plain sentences from the wearer to them.
-  For todo: to, subject and body are empty strings.
+  action = "calendar" when a meeting or time block was agreed with a specific day and time. Then start is
+  YYYY-MM-DDTHH:MM in the wearer's local time (resolve "Friday at five" from the current date given), duration_min
+  defaults to 30, and text is a short title ("Demo sync with Nayan"). A vague time ("sometime", "soon") is a todo.
+  For todo: to, subject, body and start are empty strings.
 Empty lists if nothing. Ignore small talk."""
 
 ANSWER_PROMPT = """You answer questions for someone wearing smart glasses, using only their memories below.
@@ -142,7 +146,11 @@ def extract_tasks(transcript: str, receipts: list[str] = ()) -> dict:
 
 
 def make_notes(transcript: str, slide_texts: list[str]) -> dict:
-    return _think(NOTES_PROMPT, json.dumps({"transcript": transcript, "slides": slide_texts}))
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo(os.environ.get("TIMEZONE", "America/Los_Angeles")))
+    return _think(NOTES_PROMPT, json.dumps({"now_local": now.strftime("%A %Y-%m-%d %H:%M"),
+                                            "transcript": transcript, "slides": slide_texts}))
 
 
 def embed(text: str) -> list[float]:

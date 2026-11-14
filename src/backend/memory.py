@@ -216,6 +216,8 @@ def process_frame(path: Path) -> None:
 
 
 def process_audio(path: Path) -> None:
+    if _ft_queue:
+        _ft_ask_next()         # a question timed out unanswered: move on to the next one
     wav = path.read_bytes()
     if voice.is_silent(wav):   # room tone: skip the API call, and the hallucinations it invites
         return
@@ -225,6 +227,8 @@ def process_audio(path: Path) -> None:
     pending = awareness.pending(time.time())
     if pending and len(text.split()) <= MAX_ANSWER_WORDS and parse_yes_no(text) != "unclear":
         answer_offer(pending.id, parse_yes_no(text) == "yes")
+        return
+    if _ft_waiting is not None and _ft_try_answer(text):
         return
     if notes.active() and STOP_NOTES.search(text):
         finish_notes()
@@ -357,9 +361,94 @@ def forward_to_followthrough(text: str) -> None:
     try:
         with httpx.Client(timeout=60) as c:
             c.post(f"{FOLLOWTHROUGH_URL}/api/transcript", json={"text": text}).raise_for_status()
-            c.post(f"{FOLLOWTHROUGH_URL}/api/run").raise_for_status()
+            run = c.post(f"{FOLLOWTHROUGH_URL}/api/run")
+            run.raise_for_status()
     except Exception as e:
         print(f"memory: Follow-Through forward failed: {e!r}", flush=True)
+        return
+    if FT_VOICE:
+        _ft_enqueue(run.json().get("items", []))
+
+
+# ---------- Follow-Through call and response (ElevenLabs asks, you answer yes or no) ----------
+# A new promise -> Scene asks out loud with Follow-Through's own sentence ("Want me to send Nayan the deck
+# by four?") -> listens for a short yes/no -> Follow-Through decides via POST /api/items/{id}/voice, where a
+# clear yes approves that one item, a clear no dismisses it, anything else changes nothing. One question
+# at a time. Everything here runs on the audio lane, so no locking.
+
+FT_VOICE = os.environ.get("SCENE_FT_VOICE", "1") == "1"
+FT_ANSWER_WINDOW_S = float(os.environ.get("SCENE_FT_ANSWER_WINDOW_S", "12"))
+_ft_asked: set[str] = set()      # item ids already asked aloud (never ask twice)
+_ft_queue: deque = deque()       # items waiting for their turn
+_ft_waiting: dict | None = None  # the question in the air: {id, title, listen_from, until}
+
+
+def _ft(method: str, path: str, **kw) -> dict:
+    with httpx.Client(timeout=20) as c:
+        r = c.request(method, f"{FOLLOWTHROUGH_URL}{path}", **kw)
+        r.raise_for_status()
+        return r.json()
+
+
+def _ft_enqueue(items: list[dict]) -> None:
+    for i in items:
+        if i.get("status") == "pending" and i.get("id") and i["id"] not in _ft_asked:
+            _ft_asked.add(i["id"])
+            _ft_queue.append(i)
+    _ft_ask_next()
+
+
+def _ft_ask_next() -> None:
+    global _ft_waiting
+    now = time.time()
+    if _ft_waiting and now < _ft_waiting["until"]:
+        return
+    _ft_waiting = None
+    while _ft_queue:
+        item = _ft_queue.popleft()
+        try:
+            q = _ft("GET", f"/api/items/{item['id']}/question")["text"]
+        except Exception as e:
+            print(f"memory: Follow-Through question failed: {e!r}", flush=True)
+            continue
+        voice.speak(q)
+        talking = len(q.split()) / 2.6 + 1.5   # roughly how long the laptop is speaking: don't hear ourselves
+        _ft_waiting = {"id": item["id"], "title": item.get("title", ""), "listen_from": now + talking,
+                       "until": now + talking + FT_ANSWER_WINDOW_S}
+        print(f"memory: FT ASK {q!r}", flush=True)
+        return
+
+
+def _ft_try_answer(text: str) -> bool:
+    """True if this chunk belonged to the question in the air (our own voice, or the answer)."""
+    global _ft_waiting
+    w, now = _ft_waiting, time.time()
+    if w is None:
+        return False
+    if now < w["listen_from"]:
+        return True        # the laptop asking its own question: never let it become a "promise"
+    if now > w["until"]:
+        _ft_waiting = None
+        return False
+    if len(text.split()) > MAX_ANSWER_WORDS or parse_yes_no(text) == "unclear":
+        return False       # ordinary conversation, keep listening
+    try:
+        r = _ft("POST", f"/api/items/{w['id']}/voice", json={"heard": text})
+    except Exception as e:
+        print(f"memory: Follow-Through voice answer failed: {e!r}", flush=True)
+        _ft_waiting = None
+        return True
+    _ft_waiting = None
+    item = r.get("item") or {}
+    if r.get("answer") == "yes":
+        push_card("answer", f"Approved: {w['title']}", item.get("result") or "Done.")
+        voice.speak("Done.")
+    elif r.get("answer") == "no":
+        push_card("answer", f"Skipped: {w['title']}", "Dismissed. Nothing was sent.")
+        voice.speak("Okay, skipped.")
+    print(f"memory: FT ANSWER {text!r} -> {r.get('answer')}", flush=True)
+    _ft_ask_next()
+    return True
 
 
 def set_done(task_id: int) -> bool:

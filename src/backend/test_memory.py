@@ -131,3 +131,33 @@ def test_silence_and_phantom_phrases_are_dropped():
     assert voice.is_noise("Share this video with your friends on social media.")
     assert voice.is_noise("Thanks for watching!")
     assert not voice.is_noise("Can you send me the deck by four?")
+
+
+def test_followthrough_call_and_response(monkeypatch):
+    spoken, calls = [], []
+    monkeypatch.setattr(voice, "speak", spoken.append)
+
+    def fake_ft(method, path, **kw):
+        calls.append((method, path, kw.get("json")))
+        if path.endswith("/question"):
+            return {"text": "Want me to send Nayan the deck by four?"}
+        return {"answer": "yes", "item": {"result": "Draft link only. Nothing was sent."}}
+    monkeypatch.setattr(memory, "_ft", fake_ft)
+    monkeypatch.setattr(memory, "_ft_waiting", None)
+    memory._ft_queue.clear()
+
+    memory._ft_enqueue([{"id": "a1", "status": "pending", "title": "Send Nayan the deck"},
+                        {"id": "b2", "status": "needs_review", "title": "Buy coffee"}])   # unverified: never asked
+    assert spoken == ["Want me to send Nayan the deck by four?"]
+
+    assert memory._ft_try_answer("Want me to send Nayan the deck") is True   # our own voice: swallowed
+    assert not any(p.endswith("/voice") for _, p, _ in calls)
+
+    memory._ft_waiting["listen_from"] = 0          # the laptop has finished talking
+    assert memory._ft_try_answer("let's talk about the venue tomorrow") is False   # not an answer
+    assert memory._ft_try_answer("yeah go ahead") is True
+    assert ("POST", "/api/items/a1/voice", {"heard": "yeah go ahead"}) in calls
+    assert spoken[-1] == "Done." and memory._ft_waiting is None
+
+    memory._ft_enqueue([{"id": "a1", "status": "pending", "title": "Send Nayan the deck"}])   # asked once only
+    assert len([s for s in spoken if s.startswith("Want me")]) == 1

@@ -78,6 +78,11 @@ final class BridgeState {
     /// indistinguishable from a quiet room until you look at this (§11.4).
     var audioInputPortName: String = "—"
 
+    /// Loud mic problem, shown as a banner in the Glasses tab until the mic
+    /// recovers or the run stops: the selected mic is silent, or still dead
+    /// after restarts. nil means no warning.
+    var audioWarning: String?
+
     /// Registration/permission surface, driven by WearablesManager.
     ///
     /// The enum is stored rather than a string because §6.2 gates UI on it: the
@@ -182,6 +187,10 @@ extension BridgeState {
 
     nonisolated static func setAudioInputPortName(_ name: String) {
         Task { @MainActor in shared.audioInputPortName = name }
+    }
+
+    nonisolated static func setAudioWarning(_ value: String?) {
+        Task { @MainActor in shared.audioWarning = value }
     }
 
     nonisolated static func setRegistrationState(_ value: RegistrationState) {

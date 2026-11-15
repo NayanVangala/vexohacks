@@ -156,10 +156,20 @@ struct GlassesView: View {
                     .buttonStyle(.squish)
                 }
                 VStack(spacing: 0) {
+                    // Display Audio Mode: the glasses web app is open, so the camera
+                    // is off and only the glasses mic is listening. Otherwise the
+                    // camera and mic are both capturing.
+                    row("Mode", store.displayAudioMode ? "Listening, audio only" : "Capturing, camera + audio")
                     row("Microphone", state.audioInputPortName)
                     row("Display", controller.displayState == "none" ? "Off" : controller.displayState.capitalized)
                     row("Camera permission", state.cameraPermissionText.capitalized)
                     row("Meta AI", state.registrationText.capitalized, last: true)
+                }
+                if let warning = state.audioWarning {
+                    Text(warning)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.alert)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -355,7 +365,7 @@ private struct PreferencesSection: View {
     let micLocked: Bool
     let replayIntro: () -> Void
     @AppStorage("appearance") private var appearance = "system"
-    @AppStorage("usePhoneMic") private var usePhoneMic = true
+    @AppStorage("usePhoneMic") private var usePhoneMic = false
     @State private var remote: SceneSettings?
 
     var body: some View {
@@ -380,9 +390,12 @@ private struct PreferencesSection: View {
                     Text("Connect to the laptop to change how Scene answers.")
                         .font(.subheadline).foregroundStyle(Theme.inkSoft)
                 }
-                toggle("Use iPhone microphone", "Clearer voice: the glasses mic drops to phone-call quality. Takes effect on Start.",
+                toggle("Use iPhone microphone", "Manual override only: audio is recorded from the glasses by default. Turn this on only if the glasses mic is dead. Takes effect on Start.",
                        $usePhoneMic)
                     .disabled(micLocked)
+                    .onChange(of: usePhoneMic) { _, on in
+                        BridgeState.log("manual iPhone-mic override \(on ? "ON — audio will come from the phone, not the glasses" : "OFF — audio returns to the glasses mic")")
+                    }
                 Button(action: replayIntro) {
                     Label("Replay the welcome", systemImage: "sparkle").font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.ink)

@@ -53,9 +53,55 @@ header .gear:focus { color: var(--butter); filter: drop-shadow(0 0 6px rgba(247,
 .title { font-size: 40px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; text-wrap: balance; }
 .big { font-size: 104px; font-weight: 600; letter-spacing: -.045em; line-height: .95; font-variant-numeric: tabular-nums;
   text-shadow: 0 0 28px color-mix(in srgb, var(--c) 45%, transparent); }
-.body { font-size: 21px; color: var(--dim); }
+.body { font-size: 23px; color: rgba(255, 248, 236, .88); }
 .quote { font-size: 21px; font-style: italic; color: var(--dim); }
 .hint { font-size: 17px; color: var(--faint); text-align: center; }
+
+/* Home's bubble list: iMessage-style, newest at the bottom. The hero bubble (a yes/no
+   that needs a tap) pins to the top; the feed scrolls under it. Black stays transparent:
+   bubbles are a faint cream tint, color is only the left edge (money butter, promises rose,
+   tasks sky, answers mint). */
+.stage.bubbles-stage { justify-content: flex-start; }
+.bubbles { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;
+  gap: 10px; padding-top: 10px; scrollbar-width: none; scroll-behavior: smooth;
+  scroll-snap-type: y proximity; overscroll-behavior: contain; touch-action: none; }
+/* Newest-at-bottom without justify-content: flex-end (which strands top items above the
+   scroll area in WebKit): the first bubble's auto top margin pins short lists to the bottom. */
+.bubbles > :first-child { margin-top: auto; }
+.bubbles::-webkit-scrollbar { display: none; }
+.bubble { --c: var(--mint); background: rgba(255, 248, 236, .07); border: 1px solid rgba(255, 248, 236, .14);
+  border-left: 3px solid var(--c); border-radius: 18px; padding: 12px 16px; max-width: 540px;
+  scroll-snap-align: start; }
+/* First-use hint for the volume-style swipe; hidden after the first scroll. */
+.scroll-hint { flex: none; font-size: 17px; color: var(--faint); text-align: center; padding: 2px 0 0; }
+.bubble.money { --c: var(--butter); }
+.bubble.promise { --c: var(--rose); }
+.bubble.task { --c: var(--sky); }
+.bubble.answer { --c: var(--mint); }
+.bubble.hero { flex: none; background: rgba(255, 248, 236, .11); border-color: rgba(255, 248, 236, .22); }
+/* Lead me there: the pinned top bubble. It lives in the hero slot above the scrolling feed,
+   so it never scrolls away; the thicker edge marks it as the thing that needs a tap now. */
+.bubble.lead { border-left-width: 4px; }
+.bubble-eyebrow { display: flex; justify-content: space-between; gap: 12px; font-size: 17px; color: var(--dim); margin-bottom: 4px; }
+.bubble-speaker { font-size: 19px; font-weight: 600; color: var(--c); margin-bottom: 2px; }
+.bubble-title { font-size: 30px; font-weight: 600; letter-spacing: -.01em; line-height: 1.15; text-wrap: balance;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.bubble-body { font-size: 24px; line-height: 1.3; color: rgba(255, 248, 236, .92);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.bubble-more { font-size: 17px; color: var(--faint); margin-top: 4px; }
+.bubble .big { font-size: 72px; }
+.bubble .row { margin-top: 6px; }
+.bubble .row button { font-size: 25px; }
+
+/* Extension cards (notes session, order progress, follow-through) sit in the hero slot
+   with their own markup: give them the same bubble treatment via the stage, not their files. */
+.bubbles-stage > .card { flex: none; background: rgba(255, 248, 236, .07); border: 1px solid rgba(255, 248, 236, .14);
+  border-radius: 18px; padding: 12px 16px; }
+.bubbles-stage > .card .title { font-size: 30px; }
+.bubbles-stage > .card .body, .bubbles-stage > .card .quote { font-size: 23px; color: rgba(255, 248, 236, .88); }
+
+/* Calm state: no card at all, just the one line under the logo + Live dot. */
+.calm-line { font-size: 24px; color: var(--dim); padding: 18px 2px; }
 .empty { color: var(--dim); font-size: 22px; padding: 8px 0 0 34px; }
 
 /* Nothing needs you: a soft sparkle, a calm line. */
@@ -76,14 +122,24 @@ button, .item { font: inherit; color: inherit; background: none; border: 0; outl
 .row button:focus { color: var(--butter); text-shadow: 0 0 18px rgba(247, 210, 126, .5); }
 .row button:focus::before { width: 22px; margin-right: 10px; }
 
-/* Lists: a page title, then rows of floating text; the focused row gets the sparkle. */
+/* Lists: a page title, then rows of floating text; the focused row gets the sparkle.
+   Lists scroll: they used to be overflow: hidden, so anything below the fold on
+   Tasks / Promises / Today / Notes was unreachable. A list now fills the space
+   between the title and the bottom nav and scrolls one item per swipe / wheel
+   notch / arrow, exactly like Home's bubble feed. The hero on Home stays pinned
+   above .bubbles and never scrolls away; .list has no hero above it. */
 h2 { font-size: 30px; font-weight: 600; letter-spacing: -.01em; margin-top: 4px; }
 .title + .list { margin-top: 6px; }
-.list { display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
-.item { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 9px 0 9px 34px;
-  font-size: 26px; font-weight: 600; color: var(--dim); }
-.item small { font-size: 18px; font-weight: 500; color: var(--faint); }
-.item::before { position: absolute; left: 0; top: 15px; }
+.list { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px;
+  overflow-y: auto; scrollbar-width: none; scroll-behavior: smooth;
+  scroll-snap-type: y proximity; overscroll-behavior: contain; touch-action: none; }
+.list::-webkit-scrollbar { display: none; }
+.list .item { scroll-snap-align: start; }
+.item { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 11px 14px 11px 34px;
+  font-size: 26px; font-weight: 600; color: rgba(255, 248, 236, .92);
+  background: rgba(255, 248, 236, .06); border: 1px solid rgba(255, 248, 236, .12); border-radius: 14px; }
+.item small { font-size: 19px; font-weight: 500; color: var(--dim); }
+.item::before { position: absolute; left: 11px; top: 17px; }
 .item:focus { color: var(--cream); }
 .item:focus small { color: var(--dim); }
 .item:focus::before { width: 22px; }
@@ -109,6 +165,9 @@ html.large .title { font-size: 44px; }
 html.large .item { font-size: 29px; }
 html.large .item small { font-size: 21px; }
 html.large .body, html.large .eyebrow { font-size: 23px; }
+html.large .bubble-title { font-size: 33px; }
+html.large .bubble-body { font-size: 27px; }
+html.large .bubble-speaker { font-size: 21px; }
 
 /* One orchestrated entrance: the headline settles in, list rows follow. Nothing loops. */
 @media (prefers-reduced-motion: no-preference) {
@@ -117,6 +176,7 @@ html.large .body, html.large .eyebrow { font-size: 23px; }
   .card > :nth-child(3) { animation-delay: .08s; }
   .card > :nth-child(4) { animation-delay: .12s; }
   .list .item { animation: settle .3s cubic-bezier(.2, .8, .2, 1) both; }
+  .bubble { animation: settle .3s cubic-bezier(.2, .8, .2, 1) both; }
   .list .item:nth-child(2) { animation-delay: .04s; }
   .list .item:nth-child(3) { animation-delay: .08s; }
   .list .item:nth-child(4) { animation-delay: .12s; }

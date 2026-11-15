@@ -116,6 +116,7 @@ def test_loggable_once_per_ten_minutes():
 
 @pytest.mark.parametrize("heard,want", [
     ("yeah sure", "yes"), ("nope", "no"), ("yes no", "unclear"), ("maybe", "unclear"), ("", "unclear"),
-    ("Yes, go ahead!", "yes"), ("not now", "no")])
+    ("Yes, go ahead!", "yes"), ("not now", "no"),
+    ("approve", "yes"), ("approved", "yes"), ("Can you approve that task?", "yes"), ("confirm", "yes")])
 def test_parse_yes_no(heard, want):
     assert parse_yes_no(heard) == want

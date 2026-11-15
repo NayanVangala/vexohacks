@@ -20,7 +20,7 @@ OFFER_TYPES = {"meeting", "slides"}
 LOG_TYPES = {"whiteboard": "a whiteboard", "card": "a business card", "menu": "a menu"}
 
 YES = ["yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please do", "go ahead", "do it",
-       "sounds good", "absolutely", "definitely"]
+       "sounds good", "absolutely", "definitely", "approve", "approved", "confirm"]
 NO = ["no", "nope", "nah", "don't", "dont", "do not", "cancel", "skip", "dismiss", "never mind",
       "nevermind", "not now"]
 

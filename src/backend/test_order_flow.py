@@ -36,7 +36,7 @@ class FakeAgent:
 
 def audio(monkeypatch, text, tmp=tempfile.mkdtemp()):
     from pathlib import Path
-    monkeypatch.setattr(models, "transcribe", lambda wav: text)
+    monkeypatch.setattr(models, "transcribe", lambda wav, names=(), context="": text)
     p = Path(tmp) / "a.wav"
     p.write_bytes(b"RIFF....WAVE")
     memory.process_audio(p)

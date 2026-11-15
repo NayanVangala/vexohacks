@@ -61,8 +61,53 @@ def draft_event(title: str, start_local: str, duration_min: int, quote: str) -> 
     datetime.strptime(start_local, TIME_FORMAT)
     d = {"id": next(_ids), "kind": "calendar", "title": title, "start": start_local,
          "duration_min": int(duration_min) or 30, "quote": quote, "status": "proposed", "result": "", "link": "",
-         "ts": time.time()}
+         "changed_from": "", "ts": time.time()}
     _drafts[d["id"]] = d
+    _save()
+    return d
+
+
+def update_event(draft_id: int, start_local: str) -> dict:
+    """Move a pending calendar draft to a new time, keeping the old one in `changed_from`.
+    ValueError when the draft is not a proposed calendar event, or the time is not YYYY-MM-DDTHH:MM.
+    Mirrors update_reservation: a "no actually 8" correction updates the draft in place."""
+    d = _proposed(draft_id)
+    if d.get("kind") != "calendar":
+        raise ValueError(f"draft {draft_id} is not a calendar event")
+    datetime.strptime(start_local, TIME_FORMAT)
+    d["changed_from"] = d["start"]
+    d["start"] = start_local
+    d["ts"] = time.time()
+    _save()
+    return d
+
+
+def draft_reservation(restaurant: str, start_local: str, party_size: int | None, quote: str) -> dict:
+    """A reservation REQUEST draft, not a booking: there is no restaurant booking API.
+    ValueError when the restaurant is missing or start_local is not YYYY-MM-DDTHH:MM, so a
+    vague time never becomes a draft. `changed_from` is the previous start when a correction
+    moved the time ("7, no actually 8"), else ""."""
+    if not (restaurant or "").strip():
+        raise ValueError("restaurant is required: ask the wearer which restaurant")
+    datetime.strptime(start_local, TIME_FORMAT)
+    d = {"id": next(_ids), "kind": "reservation", "restaurant": restaurant.strip(), "start": start_local,
+         "party_size": party_size if isinstance(party_size, int) and party_size > 0 else None,
+         "quote": quote, "status": "proposed", "result": "", "link": "", "changed_from": "", "ts": time.time()}
+    _drafts[d["id"]] = d
+    _save()
+    return d
+
+
+def update_reservation(draft_id: int, start_local: str) -> dict:
+    """Move a pending reservation draft to a new time, keeping the old one in `changed_from`.
+    ValueError when the draft is not a proposed reservation, or the time is not YYYY-MM-DDTHH:MM."""
+    d = _proposed(draft_id)
+    if d.get("kind") != "reservation":
+        raise ValueError(f"draft {draft_id} is not a reservation")
+    datetime.strptime(start_local, TIME_FORMAT)
+    d["changed_from"] = d["start"]
+    d["start"] = start_local
+    d["ts"] = time.time()
     _save()
     return d
 
@@ -117,6 +162,13 @@ def dismiss(draft_id: int) -> dict:
 def send(draft_id: int, client: httpx.Client | None = None) -> dict:
     """Send an approved draft. KeyError if unknown, ValueError if already sent or dismissed. Never raises on send trouble."""
     d = _proposed(draft_id)
+    if d["kind"] == "reservation":
+        # Confirming a reservation draft only confirms the DRAFT. There is no restaurant
+        # booking API, so nothing is booked and nothing is sent to the restaurant.
+        d.update(status="drafted",
+                 result="Draft reservation confirmed. No table was booked: there is no restaurant booking API, so call the restaurant to book.")
+        _save()
+        return d
     if d["kind"] == "slack":
         import slack
         ok, result = slack.send(d["target"], d["text"], client=client)

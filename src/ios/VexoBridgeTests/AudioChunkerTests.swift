@@ -40,7 +40,7 @@ final class AudioChunkerTests: XCTestCase {
     func testFeedEmitsExactlyOneWavPerFullWindow() {
         var sizes: [Int] = []
         let chunker = AudioChunker { sizes.append($0.count) }
-        chunker.feed(Data(count: 80_000))
+        chunker.feed(Self.flatPCM(80_000, level: 1000))
         XCTAssertEqual(sizes, [80_044])          // 44-byte header + payload
         XCTAssertEqual(chunker.bufferedByteCount, 0)
     }
@@ -48,7 +48,7 @@ final class AudioChunkerTests: XCTestCase {
     func testOneLargeFeedEmitsSeveralWindowsAndKeepsTheRemainder() {
         var sizes: [Int] = []
         let chunker = AudioChunker { sizes.append($0.count) }
-        chunker.feed(Data(count: 80_000 * 3 + 1_234))
+        chunker.feed(Self.flatPCM(80_000 * 3 + 1_234, level: 1000))
         XCTAssertEqual(sizes, [80_044, 80_044, 80_044])
         XCTAssertEqual(chunker.bufferedByteCount, 1_234)
     }
@@ -56,7 +56,7 @@ final class AudioChunkerTests: XCTestCase {
     func testFlushEmitsThePartialTail() {
         var sizes: [Int] = []
         let chunker = AudioChunker { sizes.append($0.count) }
-        chunker.feed(Data(count: 1_000))
+        chunker.feed(Self.flatPCM(1_000, level: 1000))
         chunker.flush()
         XCTAssertEqual(sizes, [1_044])
         XCTAssertEqual(chunker.bufferedByteCount, 0)
@@ -78,6 +78,86 @@ final class AudioChunkerTests: XCTestCase {
         chunker.discard()
         XCTAssertEqual(emitted, 0)
         XCTAssertEqual(chunker.bufferedByteCount, 0)
+    }
+
+    // MARK: - Silence gate (hallucination filter)
+    //
+    // Silent windows must never reach /capture: Whisper hallucinates fluent
+    // phrases out of pure silence and room tone.
+
+    /// Fixed-level 16-bit mono PCM: every sample `level`.
+    private static func flatPCM(_ bytes: Int, level: Int16) -> Data {
+        var data = Data(capacity: bytes)
+        var v = level.littleEndian
+        let pair = withUnsafeBytes(of: &v) { Array($0) }
+        while data.count + 2 <= bytes { data.append(contentsOf: pair) }
+        return data
+    }
+
+    func testSilentWindowIsDroppedNotUploaded() {
+        var emitted = 0
+        let chunker = AudioChunker { _ in emitted += 1 }
+        chunker.feed(Data(count: 80_000))   // exact zeros
+        XCTAssertEqual(emitted, 0)
+        XCTAssertEqual(chunker.droppedSilentWindows, 1)
+        XCTAssertEqual(chunker.bufferedByteCount, 0)
+    }
+
+    func testRoomToneWindowIsDropped() {
+        // Every sample 10 (RMS 10, below the 32 gate): room tone, not speech.
+        var emitted = 0
+        let chunker = AudioChunker { _ in emitted += 1 }
+        chunker.feed(Self.flatPCM(80_000, level: 10))
+        XCTAssertEqual(emitted, 0)
+        XCTAssertEqual(chunker.droppedSilentWindows, 1)
+    }
+
+    func testQuietSpeechWindowIsKept() {
+        // Every sample 200 (RMS 200, above the 32 gate): quiet speech uploads.
+        var emitted = 0
+        let chunker = AudioChunker { _ in emitted += 1 }
+        chunker.feed(Self.flatPCM(80_000, level: 200))
+        XCTAssertEqual(emitted, 1)
+        XCTAssertEqual(chunker.droppedSilentWindows, 0)
+    }
+
+    func testFlushDropsSilentTail() {
+        var emitted = 0
+        let chunker = AudioChunker { _ in emitted += 1 }
+        chunker.feed(Data(count: 1_000))
+        chunker.flush()
+        XCTAssertEqual(emitted, 0)
+        XCTAssertEqual(chunker.droppedSilentWindows, 1)
+    }
+
+    // MARK: - Speech onset (fast wake chime)
+    //
+    // The chime must fire on the first loud slice after silence, long before
+    // the 2.5 s window completes -- and only once per sentence.
+
+    func testSpeechOnsetFiresOnFirstLoudSliceAfterSilence() {
+        var onsets = 0
+        let chunker = AudioChunker(onChunk: { _ in }, onSpeechOnset: { onsets += 1 })
+        chunker.feed(Data(count: 3_200))   // 100 ms of silence: no onset
+        XCTAssertEqual(onsets, 0)
+        chunker.feed(Self.flatPCM(3_200, level: 1000))   // 100 ms loud: onset
+        XCTAssertEqual(onsets, 1)
+    }
+
+    func testSpeechOnsetFiresOncePerContinuousSpeech() {
+        var onsets = 0
+        let chunker = AudioChunker(onChunk: { _ in }, onSpeechOnset: { onsets += 1 })
+        chunker.feed(Self.flatPCM(3_200, level: 1000))
+        chunker.feed(Self.flatPCM(3_200, level: 1000))
+        chunker.feed(Self.flatPCM(3_200, level: 1000))
+        XCTAssertEqual(onsets, 1)   // cooldown + no silence gap: still one
+    }
+
+    func testRoomToneNeverFiresOnset() {
+        var onsets = 0
+        let chunker = AudioChunker(onChunk: { _ in }, onSpeechOnset: { onsets += 1 })
+        chunker.feed(Self.flatPCM(80_000, level: 10))   // RMS 10: room tone
+        XCTAssertEqual(onsets, 0)
     }
 
     // MARK: - WAV header, byte by byte
@@ -142,7 +222,7 @@ final class AudioChunkerTests: XCTestCase {
 
         let iterations = 100
         DispatchQueue.concurrentPerform(iterations: iterations) { _ in
-            chunker.feed(Data(count: 8_000))
+            chunker.feed(Self.flatPCM(8_000, level: 1000))
         }
         chunker.flush()
         expectation.fulfill()

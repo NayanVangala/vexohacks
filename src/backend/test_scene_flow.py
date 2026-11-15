@@ -27,12 +27,26 @@ def env(monkeypatch):
     monkeypatch.setattr(memory, "DATA_DIR", Path(tempfile.mkdtemp()))
     memory.clear_cards()
     notes.stop()
+    voice._chime_at = 0.0        # a chime from an earlier test file must not drop this file's first reply as "chime echo"
+    voice._cooldown_until = 0.0  # same for our own-voice suppression
     yield rows, spoken
     notes.stop()
 
 
 def cards(kind):
     return [c for c in memory.cards_after(0) if c["kind"] == kind]
+
+
+def _wait_until(fn, timeout_s=5.0):
+    """finish_notes() runs on the extract lane, not the audio lane: a "stop notes"
+    chunk returns before the notes card exists. Poll, do not assume it is instant."""
+    import time
+    end = time.time() + timeout_s
+    while time.time() < end:
+        if fn():
+            return True
+        time.sleep(0.05)
+    return fn()
 
 
 def three(scene):
@@ -72,7 +86,7 @@ def test_answer_offer_unknown_or_twice_raises_keyerror(env):
 
 
 def audio(monkeypatch, text, tmp_path=Path(tempfile.mkdtemp())):
-    monkeypatch.setattr(models, "transcribe", lambda wav: text)
+    monkeypatch.setattr(models, "transcribe", lambda wav, names=(), context="": text)
     p = tmp_path / "a.wav"
     p.write_bytes(b"RIFF....WAVE")
     memory.process_audio(p)
@@ -102,7 +116,8 @@ def test_stop_notes_phrase_finishes_and_pushes_notes_card(env, monkeypatch):
     memory.handle_scene(SLIDE, "s1.jpg")
     audio(monkeypatch, "Sam: I will send the budget to Priya by Friday")
     audio(monkeypatch, "ok stop notes")
-    assert not notes.active()
+    assert _wait_until(lambda: not notes.active())
+    assert _wait_until(lambda: cards("notes") and cards("task"))  # card is built after notes.stop()
     assert [c["title"] for c in cards("task")] == ["New task"] and "Send budget to Priya" in cards("task")[0]["body"]
     assert len(cards("task")) == 1                      # the invented item was dropped
     n = cards("notes")[0]
@@ -135,6 +150,7 @@ def test_email_action_item_pushes_email_card_not_task_card(env, monkeypatch):
     memory.answer_offer(cards("offer")[0]["ref"], True)
     audio(monkeypatch, "Sam: I will send the budget to Priya by Friday")
     audio(monkeypatch, "stop notes")
+    assert _wait_until(lambda: cards("email"))
     assert cards("task") == []
     card = cards("email")[0]
     assert card["title"] == "Email Priya?" and "Budget" in card["body"]
@@ -152,6 +168,7 @@ def test_calendar_action_item_pushes_calendar_card(env, monkeypatch):
     memory.answer_offer(cards("offer")[0]["ref"], True)
     audio(monkeypatch, "Nayan: let's do the demo sync on Friday at five")
     audio(monkeypatch, "stop notes")
+    assert _wait_until(lambda: cards("calendar"))
     card = cards("calendar")[0]
     assert card["title"] == "Add to calendar?" and "Demo sync with Nayan" in card["body"] and "5:00 PM" in card["body"]
     assert outbox.get(card["ref"])["status"] == "proposed" and cards("task") == []

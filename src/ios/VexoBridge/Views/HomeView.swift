@@ -6,7 +6,7 @@
 //  and overlap like a deck, oversized numbers, tiny letter-spaced labels, and
 //  one coral action. Colors and shapes live in Theme.swift.
 //
-//  Tabs: Today (numbers, what needs you, start/stop), Tasks, Things, Glasses
+//  Tabs: Today, Needs you, To do, Things, Settings
 //  (the original bridge controls). The laptop web app is separate.
 //
 
@@ -32,8 +32,8 @@ struct RootView: View {
                 .badge(store.inbox.count)
                 .tag("needs")
             TasksView(store: store)
-                .tabItem { Label("Follow-through", systemImage: "checklist") }
-                .badge(store.tasks.count + store.promises.filter { $0.status == "pending" || $0.status == "needs_review" }.count)
+                .tabItem { Label("To do", systemImage: "checklist") }
+                .badge(store.todoItems.count)
                 .tag("tasks")
             ThingsView(store: store)
                 .tabItem { Label("Things", systemImage: "key.horizontal") }
@@ -74,22 +74,32 @@ private struct TodayView: View {
     @State private var bridge = BridgeState.shared
     @State private var question = ""
     @State private var busy = false
+    @State private var convBusy = false
+    @State private var unknownName = ""
+    @State private var unknownBusy = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
+                streamControl
+                conversationCard
+                unknownFaceCard
                 askPill
                 if let a = store.lastAnswer {
                     AnswerBubble(answer: a, image: controller.backend.frameURL(a.frame))
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
+                if store.leadOffer != nil {
+                    LeadCard(store: store)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 VStack(spacing: -Theme.overlap) {
                     StackCard(color: Theme.card, index: 0) { TodayCard(today: store.today) }.scrollDepth()
                     StackCard(color: Theme.butter, index: 1) { NeedsYouCard(store: store) }.scrollDepth()
-                    captureButton.rise(2)
                 }
                 .padding(.top, 6)
+                TodoListView(store: store)
                 NotesSection(store: store)
                 OrdersSection(store: store)
                 ActivitySection(store: store)
@@ -160,31 +170,78 @@ private struct TodayView: View {
         Task { await store.ask(q) }
     }
 
-    /// The coral action, tucked under the stack like the reference's "Start Focus Session".
-    private var captureButton: some View {
-        Button {
-            busy = true
-            Task {
-                if bridge.isRunning { await controller.stop() } else { await controller.start() }
-                busy = false
+    /// The big Start / Stop streaming control, first thing on the Today tab.
+    /// Same start()/stop() pipeline as the Settings button in GlassesView —
+    /// this is the same action moved to the front page, not a second pipeline.
+    private var streamControl: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                LiveDot(color: bridge.isRunning ? Theme.chart : Theme.inkFaint,
+                        live: bridge.isRunning)
+                Text(streamStateText)
+                    .font(.headline)
+                    .foregroundStyle(Theme.ink)
+                Spacer()
+                Text(bridge.connection.rawValue.lowercased())
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.inkSoft)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(Theme.canvas, in: Capsule())
             }
-        } label: {
-            VStack(spacing: 4) {
-                Text(bridge.isRunning ? "Stop remembering" : "Start remembering")
-                    .font(.title3.weight(.medium))
-                Text(captureSubtitle).font(.footnote).opacity(0.75)
+            Button {
+                busy = true
+                Task {
+                    if bridge.isRunning { await controller.stop() } else { await controller.start() }
+                    busy = false
+                }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(busy ? (bridge.isRunning ? "Stopping…" : "Starting…")
+                                  : (bridge.isRunning ? "Stop streaming" : "Start streaming"))
+                            .font(.title2.weight(.semibold))
+                        Text(captureSubtitle).font(.footnote).opacity(0.75)
+                    }
+                    Spacer()
+                    if busy {
+                        ProgressView().tint(Theme.ink)
+                    } else {
+                        Image(systemName: bridge.isRunning ? "stop.fill" : "play.fill")
+                            .font(.title3.weight(.bold))
+                    }
+                }
+                .foregroundStyle(Theme.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20).padding(.vertical, 22)
+                .background(Theme.action, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
             }
-            .foregroundStyle(Theme.ink)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 22)
-            .background(Theme.action, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-            .overlay {
-                if busy { ProgressView().tint(Theme.ink).frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 28) }
+            .buttonStyle(.squish)
+            .disabled(busy)
+            .sensoryFeedback(.impact, trigger: bridge.isRunning)
+            .accessibilityLabel(bridge.isRunning ? "Stop streaming" : "Start streaming")
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                HStack(spacing: 24) {
+                    streamStat("\(controller.framesSent)", "Frames sent")
+                    streamStat(bridge.audioInputPortName, "Mic")
+                    streamStat(controller.displayState == "none" ? "Off" : controller.displayState.capitalized, "Display")
+                }
             }
         }
-        .buttonStyle(.squish)
-        .disabled(busy)
-        .sensoryFeedback(.impact, trigger: bridge.isRunning)
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+    }
+
+    private func streamStat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink).lineLimit(1).minimumScaleFactor(0.6)
+            Text(label).font(.caption).foregroundStyle(Theme.inkSoft)
+        }
+    }
+
+    private var streamStateText: String {
+        if busy { return bridge.isRunning ? "Stopping…" : "Starting…" }
+        return bridge.isRunning ? "Streaming" : "Stopped"
     }
 
     private var captureSubtitle: String {
@@ -192,7 +249,147 @@ private struct TodayView: View {
             if let last = bridge.lastFrameAt { return "Glasses streaming · last frame \(last)" }
             return "Waiting for the first frame…"
         }
-        return "Glasses \(bridge.connection.rawValue.lowercased())"
+        return "Camera and mic stay off until you start"
+    }
+
+    /// Conversation Mode: what the glasses are taking notes on right now, with
+    /// the same Start / Stop notes control as the lens. Sits under streaming and
+    /// never touches it: Start streaming stays the first control on Today.
+    private var conversationCard: some View {
+        let conv = store.conversation
+        let active = conv?.isActive == true
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                LiveDot(color: active ? Theme.chart : Theme.inkFaint, live: active)
+                Text(active ? "Taking notes" : "Conversation notes")
+                    .font(.headline).foregroundStyle(Theme.ink)
+                Spacer()
+                if let s = conv?.speakerName {
+                    Text(s).font(.caption.weight(.semibold)).foregroundStyle(Theme.inkSoft)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(Theme.canvas, in: Capsule())
+                }
+            }
+            Text(conversationLine)
+                .font(.footnote).foregroundStyle(Theme.inkSoft)
+            Button {
+                convBusy = true
+                Task {
+                    if active { await store.stopConversation() } else { await store.startConversation() }
+                    convBusy = false
+                }
+            } label: {
+                HStack {
+                    Text(convBusy ? (active ? "Stopping…" : "Starting…") : (active ? "Stop notes" : "Start notes"))
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    if convBusy { ProgressView().tint(Theme.card) }
+                    else { Image(systemName: active ? "stop.fill" : "record.circle").font(.subheadline.weight(.bold)) }
+                }
+                .foregroundStyle(Theme.card)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, 14)
+                .background(Theme.ink, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .buttonStyle(.squish)
+            .disabled(convBusy)
+            .accessibilityLabel(active ? "Stop notes" : "Start notes")
+            if !store.conversationAvailable {
+                Text("Needs the laptop backend update — the feed below keeps working meanwhile.")
+                    .font(.caption).foregroundStyle(Theme.inkSoft)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.mint, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+    }
+
+    /// Who-was-that card: shows only while the backend has an unknown-face prompt
+    /// armed (after a conversation ended with an unfamiliar face in it). Type the
+    /// name to enroll the saved frame, or Skip to discard it. Never shows during
+    /// a conversation: the backend arms it only at conversation end.
+    @ViewBuilder
+    private var unknownFaceCard: some View {
+        if let u = store.unknownFace, u.isPending {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.badge.questionmark")
+                        .font(.headline).foregroundStyle(Theme.ink)
+                    Text("Who was that?")
+                        .font(.headline).foregroundStyle(Theme.ink)
+                    Spacer()
+                    if let f = u.frame, let url = controller.backend.frameURL(f) {
+                        AsyncImage(url: url) { img in
+                            img.resizable().scaledToFill()
+                        } placeholder: {
+                            Image(systemName: "person.fill").foregroundStyle(Theme.inkFaint)
+                        }
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+                Text("I saw an unfamiliar face. Say their name, or type it here to remember them next time.")
+                    .font(.footnote).foregroundStyle(Theme.inkSoft)
+                HStack(spacing: 10) {
+                    TextField("Name", text: $unknownName)
+                        .submitLabel(.done)
+                        .onSubmit { Task { await enrollUnknown() } }
+                        .padding(.horizontal, 14).padding(.vertical, 12)
+                        .background(Theme.canvas, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    Button {
+                        Task { await enrollUnknown() }
+                    } label: {
+                        Text(unknownBusy ? "Saving…" : "Save")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.card)
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            .background(Theme.ink, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(.squish)
+                    .disabled(unknownBusy || unknownName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button {
+                        Task {
+                            unknownBusy = true
+                            await store.dismissUnknownFace()
+                            unknownName = ""
+                            unknownBusy = false
+                        }
+                    } label: {
+                        Text("Skip")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.inkSoft)
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            .background(Theme.canvas, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(.squish)
+                    .disabled(unknownBusy)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.butter, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        }
+    }
+
+    private func enrollUnknown() async {
+        let name = unknownName
+        unknownBusy = true
+        if await store.enrollUnknownFace(name: name) { unknownName = "" }
+        unknownBusy = false
+    }
+
+    private var conversationLine: String {
+        let conv = store.conversation
+        if conv?.isActive == true {
+            let tasks = conv?.taskTotal ?? 0
+            let lines = conv?.lineTotal ?? 0
+            let who = conv?.speakerName.map { "with \($0)" } ?? "speaker unknown"
+            return "Listening \(who) · \(tasks) task\(tasks == 1 ? "" : "s") found · \(lines) lines noted"
+        }
+        if let last = store.lastConversation {
+            return "Last conversation ended · \(last.tasks) task\(last.tasks == 1 ? "" : "s") · \(last.lines) lines — full notes in Notes."
+        }
+        return "Start notes before a conversation and Scene writes down tasks and quotes as you talk."
     }
 }
 
@@ -217,8 +414,9 @@ private struct TodayCard: View {
             }
             .foregroundStyle(Theme.ink)
 
-            HStack(alignment: .lastTextBaseline, spacing: 26) {
+            HStack(alignment: .lastTextBaseline, spacing: 10) {
                 Stat(value: today?.memories ?? 0, label: "Memories", size: 46)
+                    .layoutPriority(1)
                 Stat(value: today?.openTasks ?? 0, label: "Open tasks", size: 22)
                 Stat(value: today?.things ?? 0, label: "Things seen", size: 22)
             }
@@ -276,6 +474,7 @@ private struct NeedsYouCard: View {
             } else if let p = pending {
                 HStack(alignment: .center, spacing: 10) {
                     Text(p.amountText).font(Theme.number(44)).foregroundStyle(Theme.ink)
+                        .lineLimit(1).minimumScaleFactor(0.5)
                     star
                     Spacer()
                 }
@@ -289,15 +488,11 @@ private struct NeedsYouCard: View {
                     pill("Show QR to get paid", filled: true) { store.checkout = p }
                 }
             } else {
-                HStack(alignment: .center, spacing: 10) {
-                    Text("\(store.tasks.count)").font(Theme.number(44)).foregroundStyle(Theme.ink)
-                        .contentTransition(.numericText(value: Double(store.tasks.count)))
-                    star
-                    Spacer()
-                    recentThings
-                }
-                Text(store.tasks.isEmpty ? "Nothing waiting. Say \u{201C}hey scene\u{201D} to ask." : "open task\(store.tasks.count == 1 ? "" : "s") · nothing to approve")
-                    .foregroundStyle(Theme.inkSoft)
+                // No payment, no inbox item: the To do list right below this
+                // card is the one place for tasks, so this card says nothing
+                // about counts instead of repeating it in a second number.
+                Text("Nothing to approve right now.")
+                    .font(.subheadline).foregroundStyle(Theme.inkSoft)
             }
             if let card = store.cards.first {
                 HStack(alignment: .top, spacing: 10) {
@@ -317,21 +512,6 @@ private struct NeedsYouCard: View {
 
     private var star: some View {
         Star3D(color: Theme.action, depth: 0.3).frame(width: 44, height: 44).accessibilityHidden(true)
-    }
-
-    /// Overlapping circles of the last few things seen, like the reference's app-icon row.
-    private var recentThings: some View {
-        HStack(spacing: -10) {
-            ForEach(store.things.prefix(4)) { t in
-                AsyncImage(url: store.backend.frameURL(t.frame)) { $0.resizable().scaledToFill() } placeholder: {
-                    Text(t.name.prefix(1).uppercased()).font(.caption.weight(.semibold))
-                }
-                .frame(width: 34, height: 34)
-                .background(Theme.card)
-                .clipShape(Circle())
-                .overlay(Circle().stroke(Theme.card, lineWidth: 2.5))
-            }
-        }
     }
 
     private func pill(_ title: String, filled: Bool, action: @escaping () -> Void) -> some View {
@@ -355,12 +535,29 @@ private struct Stat: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(shown)").font(Theme.number(size)).foregroundStyle(Theme.ink)
+            Text("\(shown)").font(Theme.number(displaySize)).foregroundStyle(Theme.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentTransition(.numericText(value: Double(shown)))
             Text(label).font(.caption).foregroundStyle(Theme.inkSoft)
+                .lineLimit(1)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { countTo(value, delay: 0.4) }
         .onChange(of: value) { _, v in countTo(v, delay: 0) }
+    }
+
+    /// Size the number from its digit count so it fits its column on one
+    /// line at the biggest readable size. A monospaced digit is ~0.6em wide
+    /// and a stat column is ~95pt, so font <= 95 / (digits * 0.62).
+    /// The old 0.62x shrink made 1000 tiny (28pt) and it still wrapped,
+    /// because the Text had no bounded width for minimumScaleFactor to
+    /// work against. The full number always shows, never "1k".
+    /// 1000 / 9999 -> 38pt, 10000 -> 30pt, 999 and below -> full size.
+    private var displaySize: CGFloat {
+        let digits = max(1, String(value).count)
+        return min(size, 95 / (CGFloat(digits) * 0.62))
     }
 
     private func countTo(_ v: Int, delay: Double) {
@@ -448,65 +645,192 @@ private struct TasksView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                PageTitle("Follow-through", subtitle: subtitle)
-                PromisesSection(store: store)
-                if !store.promises.isEmpty { Eyebrow("To-dos").padding(.top, 6) }
-                if store.tasks.isEmpty {
-                    EmptyNote("Nothing open. When someone asks you to do something, it lands here.")
-                } else {
-                    VStack(spacing: -Theme.overlap) {
-                        ForEach(Array(store.tasks.enumerated()), id: \.element.id) { i, task in
-                            StackCard(color: Theme.pastels[i % Theme.pastels.count], index: i) {
-                                TaskRow(task: task) { Task { await store.complete(task.id) } }
-                            }
-                            .scrollDepth()
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                        }
-                    }
-                    .animation(.spring(response: 0.5, dampingFraction: 0.85), value: store.tasks)
-                }
+                PageTitle("To do", subtitle: "\(store.todoItems.count) thing\(store.todoItems.count == 1 ? "" : "s") waiting")
+                TodoListView(store: store, showTitle: false)
             }
             .padding(.horizontal, 16)
         }
         .background(Theme.canvas.ignoresSafeArea())
         .refreshable { await store.refreshLists() }
     }
+}
 
-    private var subtitle: String {
-        let waiting = store.promises.filter { $0.status == "pending" || $0.status == "needs_review" }.count
-        return "\(waiting) promise\(waiting == 1 ? "" : "s") waiting, \(store.tasks.count) to-do\(store.tasks.count == 1 ? "" : "s")"
+// MARK: - To do (the one list: promises + tasks, newest first)
+//
+// Follow-Through promises and backend tasks used to live in two places with
+// two names. They are one list now: "To do". The backend is unchanged; the
+// merge and de-dup happen in MemoryStore.todoItems. One row, one button:
+// Approve for a promise, Done for a task, Not now / Try again otherwise.
+
+private struct TodoListView: View {
+    let store: MemoryStore
+    var showTitle = true
+    @State private var selected: TodoItem?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if showTitle {
+                HStack {
+                    Eyebrow("To do")
+                    Spacer()
+                    Text("\(store.todoItems.count) waiting").font(.subheadline).foregroundStyle(Theme.inkSoft)
+                }
+            }
+            if store.todoItems.isEmpty {
+                TodoEmptyState()
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(store.todoItems) { item in
+                        TodoRow(item: item, store: store) { selected = item }
+                    }
+                }
+            }
+        }
+        .sheet(item: $selected) { item in TodoDetailSheet(item: item, store: store) }
     }
 }
 
-private struct TaskRow: View {
-    let task: OpenTask
-    let done: () -> Void
+private struct TodoRow: View {
+    let item: TodoItem
+    let store: MemoryStore
+    var onTap: (() -> Void)? = nil
+    @State private var busy = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(parts.title).font(.headline).foregroundStyle(Theme.ink)
-                HStack(spacing: 6) {
-                    if let meta = parts.meta { Text(meta) }
-                    Ago(ts: task.ts)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title).font(.headline).foregroundStyle(Theme.ink)
+                    if let meta = item.meta { Text(meta).font(.footnote).foregroundStyle(Theme.inkSoft) }
+                    Text(item.statusText).font(.caption).foregroundStyle(Theme.inkSoft)
                 }
-                .font(.footnote).foregroundStyle(Theme.inkSoft)
+                Spacer()
+                Button {
+                    busy = true
+                    Task { await store.todoAction(item); busy = false }
+                } label: {
+                    Text(busy ? "\u{2026}" : item.buttonLabel)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.card)
+                        .padding(.horizontal, 16).padding(.vertical, 10)
+                        .background(Theme.ink, in: Capsule())
+                }
+                .buttonStyle(.squish)
+                .disabled(busy)
+                .accessibilityLabel("\(item.buttonLabel): \(item.title)")
             }
-            Spacer()
-            Button(action: done) {
-                Image(systemName: "checkmark").font(.subheadline.weight(.bold)).foregroundStyle(Theme.ink)
-                    .frame(width: 48, height: 48).background(Theme.card, in: Circle())
+            if let q = item.quote, !q.isEmpty {
+                Text("\u{201C}\(q)\u{201D}").font(.subheadline.italic()).foregroundStyle(Theme.inkSoft).lineLimit(2)
             }
-            .buttonStyle(.squish)
-            .accessibilityLabel("Mark done")
-            .sensoryFeedback(.success, trigger: task.id)
+            Text("Tap for full detail \u{203A}").font(.caption).foregroundStyle(Theme.inkFaint)
         }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .onTapGesture { onTap?() }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("Details: \(item.title)")
     }
+}
 
-    /// "Send the deck (from Sam, due 5pm)" -> title + "from Sam, due 5pm".
-    private var parts: (title: String, meta: String?) {
-        guard task.text.hasSuffix(")"), let r = task.text.range(of: " (", options: .backwards) else { return (task.text, nil) }
-        return (String(task.text[..<r.lowerBound]), String(task.text[r.upperBound...].dropLast()))
+// MARK: - To do detail (tap a row: what was actually said)
+//
+// Title, status, who said it, when, the exact quote verbatim, and the
+// description built from the verbatim transcript lines around the quote.
+// Nothing here is paraphrased or invented: no quote saved means the screen
+// says so. Same action button as the row, plus a Dismiss for failed promises.
+struct TodoDetailSheet: View {
+    let item: TodoItem
+    let store: MemoryStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var busy = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Eyebrow(item.kind == .promise ? (item.actionLabel ?? "Promise") : "Task")
+                Text(item.title).font(.title2.weight(.semibold)).foregroundStyle(Theme.ink)
+                HStack(spacing: 8) {
+                    Text(item.statusText).font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.ink)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(Theme.butter, in: Capsule())
+                    if let meta = item.meta { Text(meta).font(.subheadline).foregroundStyle(Theme.inkSoft) }
+                }
+                if let who = item.speaker {
+                    Text("\(who) said this").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                } else {
+                    Text("Who said it was not recorded.").font(.subheadline).foregroundStyle(Theme.inkSoft)
+                }
+                Text(Date(timeIntervalSince1970: item.sortKey), format: .dateTime.weekday(.abbreviated).month().day().hour().minute())
+                    .font(.subheadline).foregroundStyle(Theme.inkSoft)
+                VStack(alignment: .leading, spacing: 6) {
+                    Eyebrow("Exactly what was said")
+                    if let q = item.quote, !q.isEmpty {
+                        Text("\u{201C}\(q)\u{201D}").font(.body.italic()).foregroundStyle(Theme.ink)
+                    } else {
+                        Text("No exact quote saved for this one.").font(.body).foregroundStyle(Theme.inkSoft)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Eyebrow("Description")
+                    if let s = item.summary, !s.isEmpty {
+                        Text(s).font(.body).foregroundStyle(Theme.ink)
+                    }
+                    if !item.context.isEmpty {
+                        ForEach(item.context, id: \.self) { line in
+                            Text(line).font(.subheadline).foregroundStyle(Theme.inkSoft)
+                        }
+                    } else if (item.summary ?? "").isEmpty && (item.detailBody ?? "").isEmpty {
+                        Text("No conversation around this one was saved.").font(.body).foregroundStyle(Theme.inkSoft)
+                    }
+                    if let d = item.detailBody, !d.isEmpty {
+                        Text(d).font(.body).foregroundStyle(Theme.ink)
+                    }
+                    if let r = item.result, !r.isEmpty {
+                        Text("Result: \(r)").font(.subheadline).foregroundStyle(Theme.inkSoft)
+                    }
+                    if !item.issues.isEmpty {
+                        Text("Needs a look: \(item.issues.joined(separator: "; "))").font(.subheadline).foregroundStyle(Theme.inkSoft)
+                    }
+                }
+                HStack(spacing: 10) {
+                    Button {
+                        busy = true
+                        Task { await store.todoAction(item); busy = false; dismiss() }
+                    } label: {
+                        Text(busy ? "\u{2026}" : item.buttonLabel).font(.headline)
+                            .frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .foregroundStyle(Theme.card).background(Theme.ink, in: Capsule())
+                    }
+                    .buttonStyle(.squish).disabled(busy)
+                    if item.kind == .promise && item.status == .failed, let id = item.promiseId {
+                        Button {
+                            busy = true
+                            Task { await store.promise(id, "dismiss"); busy = false; dismiss() }
+                        } label: {
+                            Text("Dismiss").font(.headline)
+                                .frame(maxWidth: .infinity).padding(.vertical, 14)
+                                .foregroundStyle(Theme.ink)
+                                .overlay(Capsule().stroke(Theme.ink.opacity(0.25)))
+                        }
+                        .buttonStyle(.squish).disabled(busy)
+                    }
+                    Button { dismiss() } label: {
+                        Text("Close").font(.headline)
+                            .frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .foregroundStyle(Theme.ink)
+                            .overlay(Capsule().stroke(Theme.ink.opacity(0.25)))
+                    }
+                    .buttonStyle(.squish).disabled(busy)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Theme.canvas.ignoresSafeArea())
+        .presentationDetents([.medium, .large])
     }
 }
 
@@ -520,20 +844,22 @@ private struct ThingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 PageTitle("Things", subtitle: "Where the glasses last saw them")
+                if store.leadOffer != nil {
+                    LeadCard(store: store)
+                }
                 if store.things.isEmpty {
                     EmptyNote("Nothing seen yet. Keys, wallet, laptop: wherever the glasses last saw them.")
                 } else {
                     VStack(spacing: -Theme.overlap) {
                         ForEach(Array(store.things.enumerated()), id: \.element.id) { i, thing in
                             StackCard(color: Theme.pastels[i % Theme.pastels.count], index: i) {
-                                ThingRow(thing: thing, image: store.backend.frameURL(thing.frame), open: open == thing.id)
-                            }
-                            .scrollDepth()
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
-                                    open = open == thing.id ? nil : thing.id
+                                ThingRow(thing: thing, image: store.backend.frameURL(thing.frame), open: open == thing.id, store: store) {
+                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
+                                        open = open == thing.id ? nil : thing.id
+                                    }
                                 }
                             }
+                            .scrollDepth()
                         }
                     }
                 }
@@ -549,6 +875,11 @@ private struct ThingRow: View {
     let thing: Thing
     let image: URL?
     let open: Bool
+    let store: MemoryStore
+    /// Expand/collapse. Lives on the header row only, so tapping Lead me there
+    /// below never also collapses the card.
+    let onToggle: () -> Void
+    @State private var leading = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -569,6 +900,8 @@ private struct ThingRow: View {
                 .clipShape(Circle())
                 .overlay(Circle().stroke(Theme.card, lineWidth: 3))
             }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onToggle)
             if open {
                 if let place = thing.place, !place.isEmpty {
                     Text(place).font(.footnote.weight(.medium))
@@ -580,6 +913,31 @@ private struct ThingRow: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+                if thing.frame != nil {
+                    Button {
+                        leading = true
+                        Task {
+                            await store.leadTo(thing)
+                            leading = false
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if leading { ProgressView().controlSize(.small).tint(Theme.card) }
+                            Image(systemName: "location.fill")
+                            Text(leading ? "Asking Scene..." : "Lead me there")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 13)
+                        .foregroundStyle(Theme.card)
+                        .background(Theme.ink, in: Capsule())
+                    }
+                    .buttonStyle(.squish)
+                    .disabled(leading || store.asking)
+                    .accessibilityLabel("Lead me to \(thing.name)")
+                } else {
+                    Text("No photo of this one, so Scene can't lead you to it.")
+                        .font(.footnote).foregroundStyle(Theme.inkSoft)
+                }
             } else if let place = thing.place, !place.isEmpty {
                 Text(place).font(.footnote).foregroundStyle(Theme.inkSoft).lineLimit(1)
             }
@@ -733,6 +1091,110 @@ private struct CheckoutSheet: View {
         guard let out = f.outputImage?.transformed(by: CGAffineTransform(scaleX: 10, y: 10)),
               let cg = CIContext().createCGImage(out, from: out.extent) else { return nil }
         return UIImage(cgImage: cg)
+    }
+}
+
+/// To do with nothing yet: say what it is and how to test it, so the list never
+/// looks broken or dead. Shown only when there are no promises AND no open tasks.
+private struct TodoEmptyState: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            FourPointStar().fill(Theme.action).frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Nothing to do yet").font(.headline).foregroundStyle(Theme.ink)
+                Text("When someone asks you to do something, it shows up here for you to approve. Nothing sends until you tap.")
+                    .font(.subheadline).foregroundStyle(Theme.inkSoft)
+                Text("Try it: say 'I will send Srijan the deck by 4', wait 30s, and it appears here.")
+                    .font(.subheadline).foregroundStyle(Theme.ink)
+            }
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card.opacity(0.6), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+    }
+}
+
+// MARK: - Lead me there (Things tab + Today)
+//
+// The offer after tapping Lead on a Thing. Offered only when there is a photo taken in the
+// last 3 hours; otherwise the card says plainly why not. Yes shows the photo + place on the
+// phone with Stop. Spoken step-by-step guidance still comes from the glasses' voice flow,
+// because the backend has no phone endpoint that starts a lead (lead.py starts from a spoken
+// yes after a voice question). The card states that one voice step instead of faking it.
+private struct LeadCard: View {
+    let store: MemoryStore
+
+    var body: some View {
+        if let offer = store.leadOffer {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Eyebrow(store.leadStarted ? "Leading you" : "Lead me there")
+                    Spacer()
+                    Image(systemName: "location.fill").font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkSoft)
+                }
+                Text(offer.answer).font(.title3.weight(.medium)).foregroundStyle(Theme.ink)
+                if let image = store.backend.frameURL(offer.frame) {
+                    AsyncImage(url: image) { $0.resizable().scaledToFit() } placeholder: {
+                        RoundedRectangle(cornerRadius: 20).fill(Theme.card.opacity(0.4)).frame(height: 180)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                }
+                if store.leadStarted {
+                    Text("Walk slowly. For spoken steps, ask the glasses 'Hey Scene, where are my \(offer.name)?' then say 'Yes' when Scene asks to lead you there.")
+                        .font(.subheadline).foregroundStyle(Theme.inkSoft)
+                    pill("Stop", filled: true) { store.stopLead() }
+                } else if offer.canLead {
+                    Text("Want me to lead you there?")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                    HStack(spacing: 10) {
+                        pill("Yes, lead me", filled: true) { store.startLead() }
+                        pill("Not now", filled: false) { store.dismissLead() }
+                    }
+                } else {
+                    Text(noLeadLine(offer)).font(.subheadline).foregroundStyle(Theme.inkSoft)
+                    pill("Got it", filled: false) { store.dismissLead() }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.mint, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        }
+    }
+
+    /// "I saw it at [place] [time ago], no photo to lead from". Never invents a place.
+    private func noLeadLine(_ offer: LeadOffer) -> String {
+        if offer.askFailed { return offer.answer }
+        if offer.frame == nil {
+            if let place = offer.place, !place.isEmpty {
+                return "I saw it \(placePhrase(place)) \(offer.ageText), no photo to lead from."
+            }
+            return "I last saw your \(offer.name) \(offer.ageText), but there's no photo to lead from."
+        }
+        if let place = offer.place, !place.isEmpty {
+            return "I saw it \(placePhrase(place)) \(offer.ageText). Too long ago to lead from, it may have moved."
+        }
+        return "I last saw your \(offer.name) \(offer.ageText). Too long ago to lead from, it may have moved."
+    }
+
+    /// Places already read like "on the kitchen counter", so "at" would double up.
+    private func placePhrase(_ place: String) -> String {
+        let lower = place.lowercased()
+        if lower.hasPrefix("on ") || lower.hasPrefix("in ") || lower.hasPrefix("at ") ||
+           lower.hasPrefix("next to ") || lower.hasPrefix("by ") || lower.hasPrefix("under ") {
+            return place
+        }
+        return "at \(place)"
+    }
+
+    private func pill(_ title: String, filled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                .foregroundStyle(filled ? Theme.card : Theme.ink)
+                .background(filled ? Theme.ink : .clear, in: Capsule())
+                .overlay(Capsule().stroke(Theme.ink.opacity(filled ? 0 : 0.25)))
+        }
+        .buttonStyle(.squish)
     }
 }
 

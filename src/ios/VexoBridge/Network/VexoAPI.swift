@@ -26,6 +26,8 @@ struct OpenTask: Decodable, Identifiable, Equatable, Sendable {
     let id: Int
     let text: String
     let ts: Double
+    let speaker: String?
+    let quote: String?          // exact words the task came from, verbatim; nil on older rows
 }
 
 struct Thing: Decodable, Identifiable, Equatable, Sendable {
@@ -61,13 +63,117 @@ struct Utterance: Decodable, Sendable {
     let id: Int
     let text: String
     let ts: Double
-    let kind: String?     // "chime": play the local "I heard you" ping, nothing to download
+    let kind: String?     // "chime": play the local "I heard you" ping; "chime-out": play the local "I'm done" ping, nothing to download
+}
+
+/// GET /interrupt: the laptop's barge-in sequence number. Decoded with the
+/// shared convertFromSnakeCase decoder, so interrupt_id arrives as interruptId.
+struct InterruptState: Decodable, Sendable {
+    let interruptId: Int
+}
+
+/// GET /conversation (and the same shape inside GET /session once the backend
+/// adds it there): Conversation Mode state. Every field is optional: an older
+/// backend returns none of them, and the phone just keeps polling /feed as today.
+struct ConversationState: Decodable, Equatable, Sendable {
+    let mode: String?
+    let status: String?
+    let active: Bool?
+    let startedAt: Double?
+    let lastSpeechAt: Double?
+    let speaker: String?
+    let taskCount: Int?
+    let tasksFound: Int?
+    let notesCount: Int?
+    let lines: Int?
+
+    /// "active" / "listening" / "on" / "taking_notes" / "conversation" all mean on.
+    /// Anything else (idle/off/ended) means off unless `active` says true.
+    var isActive: Bool {
+        if active == true { return true }
+        let m = (mode ?? status ?? "").lowercased()
+        return ["active", "listening", "on", "taking_notes", "conversation"].contains(m)
+    }
+
+    var taskTotal: Int { taskCount ?? tasksFound ?? 0 }
+    var lineTotal: Int { lines ?? 0 }
+    /// A real name only: "" and "Unknown" both mean no name yet.
+    var speakerName: String? {
+        guard let s = speaker?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty, s != "Unknown" else { return nil }
+        return s
+    }
+}
+
+/// One ended conversation, frozen the moment the mode flips off: what to show
+/// on the phone until the next one starts.
+struct ConversationSummary: Equatable, Sendable {
+    let tasks: Int
+    let lines: Int
+    let endedAt: Date
+}
+
+/// GET /unknown-face: the who-was-that prompt armed when a conversation ended
+/// with an unfamiliar face in it. `frame` is the saved frame filename (load it
+/// with BackendClient.frameURL); `frameUrl` is the tunnel URL when the laptop
+/// has one. Only ever pending after a conversation: never during one.
+struct UnknownFaceState: Decodable, Equatable, Sendable {
+    let pending: Bool?
+    let frame: String?
+    let frameUrl: String?
+    let askedAt: Double?
+
+    var isPending: Bool { pending == true && frame != nil }
+}
+
+/// GET /session, display half: true while the glasses web app is open (the lens
+/// beacons POST /display/heartbeat). Other /session keys are ignored here.
+struct SessionState: Decodable, Sendable {
+    let displayAudioMode: Bool
+    let conversation: ConversationState?
+    let conversationMode: String?
+}
+
+/// What /ask found for a thing: only present when the best memory is an object with a photo.
+/// The server currently strips `target` from /ask (server.py), so this is usually nil and the
+/// phone falls back to the answer's frame plus the Things row's last-seen time. Decoded anyway,
+/// so if the server ever includes it the phone uses its age instead of guessing.
+struct LeadTarget: Decodable, Equatable, Sendable {
+    let name: String?
+    let place: String?
+    let frame: String?
+    let ageMin: Int?
 }
 
 struct AskResult: Decodable, Sendable {
     let question: String
     let answer: String
     let frame: String?
+    let target: LeadTarget?
+}
+
+/// The lead offer after tapping Lead on a Thing. `canLead` is true only with a photo taken in
+/// the last 180 minutes, the same rule the glasses' voice flow uses (memory.LEAD_MAX_AGE_MIN).
+/// Never invents a place: place and frame come from the answer, else the Things row.
+struct LeadOffer: Equatable, Sendable {
+    let name: String
+    let place: String?
+    let frame: String?
+    let answer: String
+    let ageMin: Int
+    let canLead: Bool
+    let askFailed: Bool
+
+    /// "5 minutes ago", "2 hours ago", "3 days ago".
+    var ageText: String {
+        if ageMin < 1 { return "just now" }
+        if ageMin < 60 { return "\(ageMin) minute\(ageMin == 1 ? "" : "s") ago" }
+        if ageMin < 1440 {
+            let h = ageMin / 60
+            return "\(h) hour\(h == 1 ? "" : "s") ago"
+        }
+        let d = ageMin / 1440
+        return "\(d) day\(d == 1 ? "" : "s") ago"
+    }
 }
 
 // MARK: - Endpoints
@@ -214,6 +320,22 @@ struct OrderInfo: Decodable, Identifiable, Equatable, Sendable {
 
 struct OKReply: Decodable { let ok: Bool? }
 
+/// One line of the Follow-Through transcript, verbatim. The detail screen shows
+/// the lines around a promise's quote as its description, never paraphrased.
+struct FTSegment: Decodable, Equatable, Sendable {
+    let speaker: String?
+    let text: String
+    let start: Double?
+    let end: Double?
+}
+
+/// Where Follow-Through proved the quote in the transcript: segment indexes.
+struct FTProof: Decodable, Equatable, Sendable {
+    let verified: Bool?
+    let firstSegment: Int?
+    let lastSegment: Int?
+}
+
 /// A commitment Follow-Through found in the conversation, in any state (its /api/state items).
 struct Promise: Decodable, Identifiable, Equatable {
     let id: String
@@ -222,13 +344,70 @@ struct Promise: Decodable, Identifiable, Equatable {
     let status: String          // pending | needs_review | done | drafted | failed | dismissed
     let action: String?         // email | reply | calendar | todo
     let counterpart: String?
+    let owner: String?
+    let summary: String?
+    let body: String?
+    let subject: String?
+    let to: String?
+    let changedFrom: String?
+    let durationMin: Int?
+    let proof: FTProof?
     let dueLocal: String?       // "YYYY-MM-DDTHH:MM", local time
     let result: String?
     let issues: [String]?
     let link: String?
 }
 
-private struct FTState: Decodable { let items: [Promise] }
+/// One "To do" row. A Follow-Through promise and a backend task are the same
+/// thing to Nayan, so the phone merges them into one list. The backend stays
+/// split: promises live in Follow-Through, tasks in the receiver.
+struct TodoItem: Identifiable, Equatable {
+    enum Kind { case promise, task }
+    enum Status { case pending, needsReview, failed }
+    let id: String
+    let kind: Kind
+    let title: String
+    let meta: String?
+    let quote: String?
+    let status: Status
+    /// Newest first. Tasks carry a real timestamp; Follow-Through sends none,
+    /// so an undated promise sorts as just now, newest FT item first.
+    let sortKey: Double
+    let promiseId: String?
+    let taskId: Int?
+    /// Detail screen: who said it (never guessed), what kind of follow-up it
+    /// is, the one-line summary, the verbatim transcript lines around the
+    /// quote, and the draft text (email body / reply) when there is one.
+    let speaker: String?
+    let actionLabel: String?
+    let summary: String?
+    let context: [String]
+    let detailBody: String?
+    let result: String?
+    let issues: [String]
+
+    var buttonLabel: String {
+        switch (kind, status) {
+        case (.promise, .pending): "Approve"
+        case (.promise, .needsReview): "Not now"
+        case (.promise, .failed): "Try again"
+        case (.task, _): "Done"
+        }
+    }
+
+    var statusText: String {
+        switch status {
+        case .pending: "Waiting for you"
+        case .needsReview: "Needs a look — check the quote first"
+        case .failed: "Didn't go through"
+        }
+    }
+}
+
+private struct FTState: Decodable {
+    let items: [Promise]
+    let segments: [FTSegment]?
+}
 
 extension BackendClient {
     /// Run an inbox action exactly as the server described it (JSON body when it gave one).
@@ -276,10 +455,35 @@ final class MemoryStore {
     private(set) var notes: [NoteSummary] = []
     private(set) var activity: [ActivityItem] = []
     private(set) var orders: [OrderInfo] = []
-    private(set) var promises: [Promise] = []      // Follow-through tab: every promise, any state
+    private(set) var promises: [Promise] = []      // To do list: every promise, any state
+    private(set) var ftSegments: [FTSegment] = []  // Follow-Through transcript, verbatim, for detail context
     private(set) var online = false
+    /// Display Audio Mode: true while the glasses web app is open (lens heartbeat
+    /// -> backend /session -> here). Camera is off, glasses mic is listening.
+    private(set) var displayAudioMode = false
+    /// Conversation Mode: the live state from GET /conversation (or the /session
+    /// copy while the backend still lacks that route), plus the last ended one.
+    /// A backend without the route leaves `conversationAvailable` false and the
+    /// phone keeps showing the feed exactly as today.
+    private(set) var conversation: ConversationState?
+    private(set) var conversationAvailable = false
+    private(set) var lastConversation: ConversationSummary?
+    /// Unknown face: the who-was-that prompt armed at the last conversation's end
+    /// (nil when nothing is waiting: no unknown face, already enrolled, skipped,
+    /// or expired). The card in HomeView shows only while this is pending.
+    private(set) var unknownFace: UnknownFaceState?
+    private var sessionConversation: ConversationState?
+    private var conversationStartedAt: Double = 0
+    /// Fires on every mode change; BridgeController pauses/resumes frames here.
+    var onDisplayAudioModeChanged: ((Bool) -> Void)?
     private(set) var lastAnswer: AskResult?
     private(set) var asking = false
+
+    /// Lead me there: the offer (or the honest no-photo note) after tapping Lead on a Thing.
+    private(set) var leadOffer: LeadOffer?
+    /// Yes was tapped: the phone shows the photo + place and Stop. Spoken step-by-step
+    /// guidance still comes from the glasses' voice flow (see startLead).
+    private(set) var leadStarted = false
 
     /// The approved payment whose QR the other person is scanning. Set on
     /// approve (from the phone OR a pinch on the glasses), polled until paid.
@@ -295,7 +499,15 @@ final class MemoryStore {
     var onSpeech: ((Data) -> Void)?
     /// Called the moment the laptop recognizes "hey scene".
     var onChime: (() -> Void)?
+    /// Called the moment a real answer is done (spoken answer finished, or a
+    /// text-only answer card was shown). The backend queues the chime-out line
+    /// behind the answer, so this fires after the answer, never before it.
+    var onChimeOut: (() -> Void)?
+    /// Called when the laptop reports a barge-in (the wearer started talking
+    /// over Jessica): the phone must stop its player and drop queued lines.
+    var onInterrupt: (() -> Void)?
     private var lastSpeech = -1   // -1: first poll only catches up, never replays old lines
+    private var lastInterruptId = -1   // -1: first poll only catches up, never stops anything
 
     private var lastCardId = 0
     private var failures = 0
@@ -303,6 +515,12 @@ final class MemoryStore {
     private var pollTask: Task<Void, Never>?
     private var speechTask: Task<Void, Never>?
     private var fetchingSpeech = false
+    /// MP3 downloads run here, not in the poll loop: a slow download used to hold
+    /// `fetchingSpeech` and stall discovery of the next line (and any chime)
+    /// behind it. Lines wait in `speechPending` in id order; one serial drain
+    /// task downloads them so answers still play in order.
+    private var speechDownloadTask: Task<Void, Never>?
+    private var speechPending: [Utterance] = []
 
     init(backend: BackendClient) {
         self.backend = backend
@@ -340,6 +558,38 @@ final class MemoryStore {
             }
             primed = true
             await refreshLists()
+            // Display Audio Mode, polled with everything else: the lens beacons
+            // the backend, the backend answers in /session, the controller
+            // pauses frames and keeps the mic on the change. A backend that
+            // predates the mode returns no key, so this just stays false.
+            if let s: SessionState = try? await backend.get("/session") {
+                if s.displayAudioMode != displayAudioMode {
+                    displayAudioMode = s.displayAudioMode
+                    onDisplayAudioModeChanged?(s.displayAudioMode)
+                }
+                // Conversation Mode via /session, for backends that added it there
+                // but not GET /conversation yet (see below).
+                sessionConversation = s.conversation ?? s.conversationMode.map {
+                    ConversationState(mode: $0, status: nil, active: nil, startedAt: nil, lastSpeechAt: nil,
+                                      speaker: nil, taskCount: nil, tasksFound: nil, notesCount: nil, lines: nil)
+                }
+            }
+            // Conversation Mode: GET /conversation when the backend has it. A 404
+            // just means the laptop predates it: fall back to the /session copy
+            // above, and otherwise keep polling /feed as today.
+            if let c: ConversationState = try? await backend.get("/conversation") {
+                conversationAvailable = true
+                applyConversation(c)
+            } else {
+                conversationAvailable = false
+                if let c = sessionConversation { applyConversation(c) }
+            }
+            // Unknown face: GET /unknown-face when the backend has it. A 404 just
+            // means the laptop predates it: the spoken prompt + feed card still work,
+            // only the tap-to-type card stays hidden.
+            if let u: UnknownFaceState = try? await backend.get("/unknown-face") {
+                unknownFace = u.isPending ? u : nil
+            }
             if let c = checkout, c.status == "approved" {
                 checkout = try await backend.get("/payments/\(c.id)")
             }
@@ -356,23 +606,86 @@ final class MemoryStore {
         }
     }
 
+    /// Polls /speech (small JSON, fast) and returns immediately: chime-in lines
+    /// fire inline, everything else queues for the background drain below. The
+    /// old shape awaited each MP3 download inside this loop while holding
+    /// `fetchingSpeech`, so one slow MP3 stretched the 0.5 s poll into seconds
+    /// and a chime posted meanwhile could age past its 5 s window unheard.
+    /// Downloads no longer gate discovery; the loop keeps its 0.5 s cadence
+    /// whatever the LAN does.
     private func playNewSpeech() async {
         guard !fetchingSpeech else { return }
         fetchingSpeech = true
         defer { fetchingSpeech = false }
+        // Barge-in: if the laptop stopped Jessica mid-sentence (the wearer
+        // started talking), stop the phone player and drop every line queued
+        // behind her, BEFORE appending this poll's lines -- the new wake chime
+        // is queued server-side after the interrupt, so it still plays.
+        if let state: InterruptState = try? await backend.get("/interrupt") {
+            if lastInterruptId < 0 {
+                lastInterruptId = state.interruptId   // first poll: catch up, don't stop anything
+            } else if state.interruptId != lastInterruptId {
+                lastInterruptId = state.interruptId
+                speechPending.removeAll()
+                speechDownloadTask?.cancel()
+                speechDownloadTask = nil
+                onInterrupt?()
+            }
+        }
         guard let lines: [Utterance] = try? await backend.get("/speech?after=\(max(lastSpeech, 0))") else { return }
         let catchingUp = lastSpeech < 0
         lastSpeech = max(lastSpeech, lines.map(\.id).max() ?? 0, 0)
         guard !catchingUp else { return }
-        for line in lines where Date().timeIntervalSince1970 - line.ts < 30 {   // stale lines aren't worth saying
+        let now = Date().timeIntervalSince1970
+        for line in lines where now - line.ts < 30 {   // stale lines aren't worth saying
             if line.kind == "chime" {
-                if Date().timeIntervalSince1970 - line.ts < 5 { onChime?() }   // a late ping is just confusing
+                // No download: the chime is a local WAV, so it fires the moment
+                // the poll sees it instead of waiting behind MP3 downloads.
+                if now - line.ts < 5 { onChime?() }   // a late ping is just confusing
                 continue
             }
-            guard let url = URL(string: "\(backend.baseURL)/speech/\(line.id)"),
-                  let (data, response) = try? await URLSession.shared.data(from: url),
-                  (response as? HTTPURLResponse)?.statusCode == 200 else { continue }
-            onSpeech?(data)
+            // Answers AND chime-outs queue in server order for the serial drain:
+            // the drain hands each answer to AudioPlayer before it reaches the
+            // chime-out behind it, so the chime-out still sounds the moment the
+            // answer ends, never before it. (Chime-in stays inline above: a wake
+            // ack must preempt, not wait behind downloads.)
+            speechPending.append(line)
+        }
+        startSpeechDownloadsIfNeeded()
+    }
+
+    /// Serial MP3 drain: downloads pending lines in id order and hands each to
+    /// `onSpeech` the moment it lands, so the first line plays without waiting
+    /// for later ones. Chime-out lines carry no audio and fire here, in order,
+    /// once the answer ahead of them is already queued. A stalled download
+    /// fails fast (10 s, like the upload timeout) instead of wedging the queue
+    /// on URLSession's 60 s default, and a line that waited so long it went
+    /// stale is skipped rather than spoken to a question from a minute ago.
+    /// The poll loop never awaits this task.
+    private func startSpeechDownloadsIfNeeded() {
+        guard speechDownloadTask == nil, !speechPending.isEmpty else { return }
+        speechDownloadTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, let line = self.speechPending.first {
+                self.speechPending.removeFirst()
+                if line.kind == "chime-out" {
+                    // A late ping is just confusing; on time, it fires after the
+                    // answer ahead of it was already handed to AudioPlayer.
+                    if Date().timeIntervalSince1970 - line.ts < 5 { self.onChimeOut?() }
+                    continue
+                }
+                guard Date().timeIntervalSince1970 - line.ts < 30 else { continue }
+                guard let url = URL(string: "\(self.backend.baseURL)/speech/\(line.id)") else { continue }
+                var req = URLRequest(url: url)
+                req.timeoutInterval = 10
+                guard let (data, response) = try? await URLSession.shared.data(for: req),
+                      (response as? HTTPURLResponse)?.statusCode == 200 else { continue }
+                guard Date().timeIntervalSince1970 - line.ts < 30 else { continue }
+                self.onSpeech?(data)
+            }
+            self.speechDownloadTask = nil
+            // A poll may have queued lines after the last check; restart if so.
+            if !self.speechPending.isEmpty { self.startSpeechDownloadsIfNeeded() }
         }
     }
 
@@ -397,6 +710,7 @@ final class MemoryStore {
         var items = (try? await ib) ?? inbox.filter { $0.type != "promise" }
         if let ft = try? await ft {   // Follow-Through is optional: missing just means no promises
             promises = ft.items.filter { $0.status != "dismissed" }
+            ftSegments = ft.segments ?? []
             let now = Date().timeIntervalSince1970
             items += ft.items.filter { $0.status == "pending" }.map { i in
                 InboxItem(type: "promise", ref: i.id, title: i.title, body: i.quote.map { "\u{201C}\($0)\u{201D}" } ?? "",
@@ -413,7 +727,33 @@ final class MemoryStore {
 
     func order(_ ref: String) -> OrderInfo? { orders.first { String($0.id) == ref } }
 
-    /// Follow-through tab buttons: approve | dismiss | retry, straight to Follow-Through.
+    /// Detail screen lookups. Nothing here invents text: the quote comes from
+    /// the promise / task row, the context lines are verbatim transcript
+    /// segments around the quote (two before, two after, skipping the quote
+    /// segment itself), formatted "Name: what was said".
+    func promise(id: String) -> Promise? { promises.first { $0.id == id } }
+
+    func ftContext(for p: Promise) -> [String] {
+        guard let first = p.proof?.firstSegment, let last = p.proof?.lastSegment,
+              !ftSegments.isEmpty, first >= 0, last >= first else { return [] }
+        let lo = max(0, first - 2), hi = min(ftSegments.count - 1, last + 2)
+        return (lo...hi).filter { $0 < first || $0 > last }.map { i in
+            let s = ftSegments[i]
+            let who = (s.speaker ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return who.isEmpty ? s.text : "\(who): \(s.text)"
+        }
+    }
+
+    /// Speaker for a promise: counterpart first, then the owner who made it.
+    /// Empty / "Unknown" means no name: the detail screen says so, never guesses.
+    static func promiseSpeaker(_ p: Promise) -> String? {
+        for n in [p.counterpart, p.owner] {
+            if let n = n?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty, n != "Unknown" { return n }
+        }
+        return nil
+    }
+
+    /// To do row buttons: approve | dismiss | retry, straight to Follow-Through.
     func promise(_ id: String, _ verb: String) async {
         do {
             _ = try await backend.perform(InboxAction(label: verb, method: "POST", path: "/ft/api/items/\(id)/\(verb)",
@@ -451,6 +791,86 @@ final class MemoryStore {
         return payments.first { $0.id == id } ?? (checkout?.id == id ? checkout : nil)
     }
 
+    // MARK: - Conversation Mode
+
+    /// Fold a fresh ConversationState in, freezing a summary on the active->off flip.
+    /// Counts prefer the backend's own numbers; the feed cards are the fallback
+    /// (capped at the newest 50, so a long conversation can undercount from here).
+    private func applyConversation(_ c: ConversationState) {
+        let wasActive = conversation?.isActive == true
+        if c.isActive, !wasActive {
+            lastConversation = nil
+            conversationStartedAt = c.startedAt ?? Date().timeIntervalSince1970
+        } else if !c.isActive, wasActive {
+            let from = conversationStartedAt
+            let tasks = max(c.taskTotal, cards.filter { $0.kind == "task" && $0.ts >= from }.count)
+            let lines = max(c.lineTotal, cards.filter { $0.kind == "transcript" && $0.ts >= from }.count)
+            lastConversation = ConversationSummary(tasks: tasks, lines: lines, endedAt: .now)
+        }
+        conversation = c
+    }
+
+    /// Start notes from the phone. The response body is ignored on purpose: its
+    /// shape is the backend's to choose, and the next GET /conversation (one tick
+    /// away) is the confirmation. Needs the Conversation endpoints on the laptop
+    /// (and a backend restart after the update) or this just says so.
+    func startConversation() async {
+        do {
+            let _: Ignored = try await backend.post("/conversation/start")
+            conversationAvailable = true
+            if let c: ConversationState = try? await backend.get("/conversation") { applyConversation(c) }
+            BridgeState.log("CONVERSATION started")
+        } catch {
+            BridgeState.logError("start conversation", error)
+            notice = "Couldn't start notes: \(error.localizedDescription). Check the laptop backend is updated and restarted."
+        }
+    }
+
+    func stopConversation() async {
+        do {
+            let _: Ignored = try await backend.post("/conversation/stop")
+            conversationAvailable = true
+            if let c: ConversationState = try? await backend.get("/conversation") { applyConversation(c) }
+            BridgeState.log("CONVERSATION stopped")
+        } catch {
+            BridgeState.logError("stop conversation", error)
+            notice = "Couldn't stop notes: \(error.localizedDescription). Check the laptop backend is updated and restarted."
+        }
+    }
+
+    // MARK: - Unknown face (enroll after the conversation)
+
+    /// Enroll the saved unknown frame under `name`. The laptop enrolls its own
+    /// saved frame: the phone only sends the name, never a photo. No name, no
+    /// enroll: an empty name just shows the notice and sends nothing. Returns
+    /// true when the laptop confirmed the enrollment.
+    func enrollUnknownFace(name: String) async -> Bool {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { notice = "Type a name first."; return false }
+        do {
+            let _: Ignored = try await backend.post("/unknown-face/enroll", form: ["name": clean])
+            unknownFace = nil
+            BridgeState.log("UNKNOWN FACE enrolled \(clean)")
+            return true
+        } catch {
+            BridgeState.logError("enroll unknown face", error)
+            notice = "Couldn't save that name: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Discard the saved unknown frame without enrolling. Never asks again for that conversation.
+    func dismissUnknownFace() async {
+        do {
+            let _: Ignored = try await backend.post("/unknown-face/dismiss")
+            unknownFace = nil
+            BridgeState.log("UNKNOWN FACE dismissed")
+        } catch {
+            BridgeState.logError("dismiss unknown face", error)
+            notice = "Couldn't dismiss: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - Actions (the human gate: every one of these is a tap or a pinch)
 
     func approve(_ paymentId: Int) async {
@@ -480,12 +900,148 @@ final class MemoryStore {
         await refreshLists()
     }
 
-    func ask(_ question: String) async {
+    /// The single To do list: actionable promises + open tasks, newest first,
+    /// de-duplicated by title. A promise and a task saying the same thing show
+    /// once (the promise wins: approving is the gate). Done and drafted
+    /// promises are out: they are finished, not to do.
+    var todoItems: [TodoItem] {
+        var items: [TodoItem] = []
+        let now = Date().timeIntervalSince1970
+        for (r, p) in promises.reversed().enumerated() {
+            let status: TodoItem.Status?
+            switch p.status {
+            case "pending": status = .pending
+            case "needs_review": status = .needsReview
+            case "failed": status = .failed
+            default: status = nil
+            }
+            guard let status else { continue }
+            let due = p.dueLocal.flatMap(Self.date(fromDue:))
+            let detail = [p.subject.map { "Subject: \($0)" }, p.body].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+            items.append(TodoItem(id: "promise-\(p.id)", kind: .promise, title: p.title,
+                                  meta: Self.promiseMeta(p), quote: p.quote, status: status,
+                                  sortKey: due?.timeIntervalSince1970 ?? now - Double(r) * 60,
+                                  promiseId: p.id, taskId: nil,
+                                  speaker: Self.promiseSpeaker(p),
+                                  actionLabel: p.action.map { $0.capitalized },
+                                  summary: p.summary?.isEmpty == false ? p.summary : nil,
+                                  context: ftContext(for: p),
+                                  detailBody: detail.isEmpty ? nil : detail,
+                                  result: p.result?.isEmpty == false ? p.result : nil,
+                                  issues: p.issues ?? []))
+        }
+        for t in tasks {
+            let (title, meta) = Self.splitTaskText(t.text)
+            items.append(TodoItem(id: "task-\(t.id)", kind: .task, title: title, meta: meta,
+                                  quote: t.quote, status: .pending, sortKey: t.ts,
+                                  promiseId: nil, taskId: t.id,
+                                  speaker: (t.speaker?.isEmpty == false && t.speaker != "Unknown") ? t.speaker : nil,
+                                  actionLabel: nil, summary: nil, context: [],
+                                  detailBody: nil, result: nil, issues: []))
+        }
+        items.sort { $0.sortKey > $1.sortKey }
+        // One row per thing to do: the same title twice (promise + task, or
+        // Follow-Through finding the same promise twice) shows once.
+        var seen = Set<String>()
+        return items.filter { seen.insert(Self.normTitle($0.title)).inserted }
+    }
+
+    /// The one button on a To do row. Promise approve / task done / dismiss /
+    /// retry all go through the existing calls; the list refreshes after.
+    func todoAction(_ item: TodoItem) async {
+        switch (item.kind, item.status) {
+        case (.promise, .pending): if let id = item.promiseId { await promise(id, "approve") }
+        case (.promise, .needsReview): if let id = item.promiseId { await promise(id, "dismiss") }
+        case (.promise, .failed): if let id = item.promiseId { await promise(id, "retry") }
+        case (.task, _): if let id = item.taskId { await complete(id) }
+        }
+    }
+
+    private static func date(fromDue d: String) -> Date? {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        return f.date(from: d)
+    }
+
+    private static func promiseMeta(_ p: Promise) -> String? {
+        var bits: [String] = []
+        if let c = p.counterpart, !c.isEmpty { bits.append("With \(c)") }
+        if let d = p.dueLocal, !d.isEmpty {
+            bits.append(date(fromDue: d).map { $0.formatted(.dateTime.weekday(.abbreviated).hour().minute()) } ?? d)
+        }
+        return bits.isEmpty ? nil : bits.joined(separator: " · ")
+    }
+
+    private static func normTitle(_ s: String) -> String {
+        s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    /// "Send the deck (from Sam, due 5pm)" -> title + "from Sam, due 5pm".
+    private static func splitTaskText(_ text: String) -> (String, String?) {
+        guard text.hasSuffix(")"), let r = text.range(of: " (", options: .backwards) else { return (text, nil) }
+        return (String(text[..<r.lowerBound]), String(text[r.upperBound...].dropLast()))
+    }
+
+    @discardableResult
+    func ask(_ question: String) async -> Bool {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return }
+        guard !q.isEmpty else { return false }
         asking = true
         defer { asking = false }
-        do { lastAnswer = try await backend.post("/ask", form: ["text": q]) }
-        catch { BridgeState.logError("ask", error); notice = "Couldn't reach your memory. Check the laptop address in the Glasses tab." }
+        do {
+            lastAnswer = try await backend.post("/ask", form: ["text": q])
+            return true
+        } catch {
+            BridgeState.logError("ask", error)
+            notice = "Couldn't reach your memory. Check the laptop address in the Glasses tab."
+            return false
+        }
+    }
+
+    // MARK: - Lead me there (Things tab)
+
+    /// Lead button on a Thing: ask where it is, then offer to lead, or say plainly why not.
+    /// The frame comes from the answer (its target, else its frame), else the Things row;
+    /// the age comes from the answer's target when the server sends one, else the row's
+    /// last-seen time. No location is ever invented: with no frame there is no offer.
+    func leadTo(_ thing: Thing) async {
+        let rowAgeMin = Int(max(0, Date().timeIntervalSince1970 - thing.ts) / 60)
+        let ok = await ask("Where is my \(thing.name)?")
+        leadStarted = false
+        guard ok, let a = lastAnswer else {
+            leadOffer = LeadOffer(name: thing.name, place: thing.place, frame: thing.frame,
+                                  answer: "Couldn't reach your memory. Check the laptop address in the Glasses tab.",
+                                  ageMin: rowAgeMin, canLead: false, askFailed: true)
+            return
+        }
+        let frame = a.target?.frame ?? a.frame ?? thing.frame
+        let place = (a.target?.place).flatMap { $0.isEmpty ? nil : $0 } ?? thing.place
+        let age = a.target?.ageMin ?? rowAgeMin
+        leadOffer = LeadOffer(name: thing.name, place: place, frame: frame, answer: a.answer,
+                              ageMin: age, canLead: frame != nil && age <= 180, askFailed: false)
+        if leadOffer?.canLead == true {
+            BridgeState.log("LEAD offer for \(thing.name) (photo, \(age) min ago)")
+        }
+    }
+
+    /// Yes on the lead offer. There is no phone endpoint that starts the backend lead loop
+    /// (lead.py only starts from a spoken yes after a voice question), so the phone shows the
+    /// photo + place and the card states the one voice step that starts spoken guidance.
+    /// Nothing here pretends live steps are running.
+    func startLead() {
+        guard leadOffer?.canLead == true else { return }
+        leadStarted = true
+        BridgeState.log("LEAD showing the way to \(leadOffer?.name ?? "?") - spoken steps via glasses voice flow")
+    }
+
+    func stopLead() {
+        if leadStarted { BridgeState.log("LEAD stopped for \(leadOffer?.name ?? "?")") }
+        leadOffer = nil
+        leadStarted = false
+    }
+
+    func dismissLead() {
+        leadOffer = nil
+        leadStarted = false
     }
 }

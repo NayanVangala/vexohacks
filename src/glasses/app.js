@@ -32,7 +32,55 @@ const usd = c => '$' + (c / 100).toFixed(2);
 const ago = ts => { const m = Math.round((Date.now() / 1000 - ts) / 60); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : Math.round(m / 60) + ' h ago'; };
 
 let state = { online: false, view: 'home', cards: [], tasks: [], things: [], payments: [], lastCard: 0,
-              dismissed: new Set(), note: '', answer: null, asking: '' };
+              focus: null,   // the Follow-Through / Needs-you / task item on screen: what "this" means
+              leadIgnoreBefore: 0, dismissed: new Set(), note: '', answer: null, asking: '',
+              // Conversation Mode (see the block after speakerLine): live counts tallied
+              // from /feed while a conversation runs; convSummary freezes them when it ends.
+              conv: { active: false, available: false, mode: null, startedAt: 0, lastSpeechAt: 0, speaker: null, tasks: 0, lines: 0 },
+              convSummary: null };
+
+// Home scroll, volume-style: temple swipe forward/back is volume up/down on the
+// Ray-Ban Display, and in this web app it arrives as a touch swipe (or a wheel).
+// Swipe down = volume down = scroll the bubble list down one bubble.
+// Swipe up = volume up = scroll up one bubble. Arrow keys and the wheel are the
+// same move in a browser. D-pad focus movement is separate and untouched below:
+// swipe/wheel/arrow scrolls the list, D-pad still moves focus.
+let scrollHintSeen = (() => { try { return localStorage.getItem('scene.scrollHint') === '1'; } catch { return false; } })();
+function bubbleList() { return $app.querySelector('.bubbles'); }
+// The scrollable list on the current screen: Home's bubble feed, or the .list
+// on Tasks / Things / Ask / Recent / Needs you / Today / Notes / Promises.
+// Home was the only screen that scrolled, so the other lists were stuck at the
+// top with items below the fold unreachable (their CSS was overflow: hidden).
+// Every list is now scrollable the same way, one item per swipe / wheel notch.
+function scrollableEl() { return $app.querySelector('.bubbles') || $app.querySelector('.list'); }
+function bubbleStep(el) {
+  const first = el.querySelector('.bubble, .item');
+  if (!first) return 120;
+  const gap = parseFloat(getComputedStyle(el).gap) || 10;
+  return first.offsetHeight + gap;
+}
+function hideScrollHint() {
+  if (scrollHintSeen) return;
+  scrollHintSeen = true;
+  try { localStorage.setItem('scene.scrollHint', '1'); } catch {}
+  $app.querySelector('.scroll-hint')?.remove();
+}
+function scrollCurrent(dir) {
+  // dir +1 = down one item, -1 = up one item. Snap, never past either end.
+  // Works on every screen, not just Home: the swipe / wheel / arrow handlers
+  // below used to return early on any non-Home view.
+  const el = scrollableEl();
+  if (!el || el.scrollHeight <= el.clientHeight + 1) return false;
+  const step = bubbleStep(el);
+  const max = el.scrollHeight - el.clientHeight;
+  const index = Math.round(el.scrollTop / step);
+  const target = Math.max(0, Math.min(max, (index + dir) * step));
+  if (target === el.scrollTop) return false;
+  hideScrollHint();
+  el.scrollTo({ top: target, behavior: 'smooth' });
+  return true;
+}
+function scrollBubbles(dir) { return scrollCurrent(dir); }   // Home-only name, kept for callers
 
 // Extension points. Other files loaded after this one (src/glasses/followthrough.js) add screens,
 // data, and actions here instead of editing this file. See docs/FOLLOWTHROUGH-ON-GLASSES.md.
@@ -41,7 +89,7 @@ const pollers = [];    // async () => void            (runs every 2 s; write res
 const actions = {};    // data-act -> async dataset => void   (a pinch on <button data-act="...">)
 const heroes = [];     // () => html | null            (Home's big card; first non-null wins, after payments)
 const navTiles = [];   // () => html                   (extra buttons in Home's bottom grid)
-window.Scene = { state, views, pollers, actions, heroes, navTiles, api, esc, ago, render, dockItem, icon };
+window.Scene = { state, views, pollers, actions, heroes, navTiles, api, esc, ago, render, dockItem, icon, setFocus, clearFocus, postFocus };
 
 async function api(path, method = 'GET', form) {
   const r = await fetch(path, form ? { method, body: new URLSearchParams(form) } : { method });
@@ -49,19 +97,86 @@ async function api(path, method = 'GET', form) {
   return r.json();
 }
 
+// ---- Display focus: "tell me more about this" ----
+// The item the wearer is looking at (opened, or D-pad-focused on a list) is
+// the only thing "this" can mean. Post it to the backend as the current focus;
+// the backend keeps it for 5 min, and "tell me more about this" answers about
+// exactly that item, never a guessed one. Re-posted on every display heartbeat
+// while it is still on screen, so the 5 min clock stays fresh. Clearing happens
+// on approve / dismiss (the item is done) and on display close (server-side).
+function setFocus(item) {
+  if (!item || !item.id || !item.title) return;
+  state.focus = { ...item, id: String(item.id) };
+  postFocus();
+}
+function clearFocus() {
+  state.focus = null;
+  try { navigator.sendBeacon('/focus/clear'); } catch {}
+}
+function postFocus() {
+  if (!state.focus) return;
+  try {
+    fetch('/focus', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state.focus), keepalive: true }).catch(() => {});
+  } catch {}
+}
+// D-pad focus is "looking at": when a promise / Needs-you row / task takes
+// focus, it becomes the current focus too, so "tell me more about this" works
+// without opening the card first. Opening still sets it (ft-open / need-open);
+// this only covers rows, and it never guesses an item. Re-focusing the same
+// row on a poll re-post is idempotent, it just refreshes the 5 min clock.
+document.addEventListener('focusin', e => {
+  const el = e.target.closest && e.target.closest('button, .item');
+  if (!el || !el.dataset) return;
+  try {
+    if (el.dataset.act === 'ft-open' && state.ft?.items && window.Scene.ftFocus) {
+      const i = state.ft.items.find(x => String(x.id) === el.dataset.id);
+      if (i) window.Scene.ftFocus(i);
+    } else if (el.dataset.act === 'ft-approve' && state.ft?.items && window.Scene.ftFocus) {
+      const i = state.ft.items.find(x => String(x.id) === el.dataset.id);
+      if (i) window.Scene.ftFocus(i);
+    } else if (el.dataset.act === 'need-open' && state.inbox && window.Scene.needFocus) {
+      const i = state.inbox.find(x => (x.type + ':' + x.id) === el.dataset.key);
+      if (i) window.Scene.needFocus(i);
+    } else if (el.dataset.act === 'done' && state.tasks) {
+      const t = state.tasks.find(x => String(x.id) === el.dataset.id);
+      if (t) setFocus({ id: 'task:' + t.id, kind: 'task', title: t.text, quote: t.quote || null,
+        speaker: t.speaker || t.from_whom || null, status: 'open', action: 'task', body: '', context: [] });
+    }
+  } catch {}
+});
+
 async function poll() {
   try {
     const fresh = await api('/feed?after=' + state.lastCard);
     if (fresh.length) {
       state.lastCard = Math.max(...fresh.map(c => c.id));
       state.cards = [...fresh.reverse(), ...state.cards].slice(0, 30);
+      // Conversation Mode live counts: tally tasks + transcript lines as they arrive.
+      if (state.conv.active) for (const c of fresh) {
+        if (state.conv.startedAt && c.ts < state.conv.startedAt) continue;
+        if (c.kind === 'task') state.conv.tasks++;
+        else if (c.kind === 'transcript') state.conv.lines++;
+      }
     }
     let settings;
     [state.tasks, state.things, state.payments, settings] = await Promise.all([api('/tasks'), api('/items'), api('/payments'), api('/settings')]);
     state.mode = settings.output;   // null until the wearer picks: render() then asks
     state.settings = settings;
+    // Display Audio Mode: the web app is open, so the DAT camera cannot run.
+    // Frames are paused server-side; the iPhone mic keeps listening. The lens
+    // shows answers as bubbles in this mode instead of suppressing them.
+    state.displayAudioMode = !!settings.display_audio_mode;
+    state.audioAgeS = settings.audio_age_s ?? null;
     state.online = true;
+    // Conversation Mode (backend: GET /conversation). A 404 means the laptop
+    // predates it: keep polling /session + /feed exactly as today, no error.
+    try { convUpdate(await api('/conversation')); }
+    catch { state.conv.available = false; }
     await Promise.all(pollers.map(p => p().catch(err => report('poller: ' + err.message))));
+    // Pollers (scene-views.js) just refreshed state.session: use its
+    // conversation copy while GET /conversation itself is missing.
+    if (!state.conv.available) convUpdateFromSession();
   } catch { state.online = false; }
   render();
 }
@@ -78,87 +193,364 @@ function spotlight() {
   if (ask) return { kind: 'confirm', card: ask };
   const order = state.cards.find(c => c.kind === 'order' && !state.dismissed.has(c.id));
   if (order) return { kind: 'order', card: order };
+  // A reservation draft waits for a tap, like a calendar or order card. Confirming it only
+  // confirms the draft: there is no restaurant booking API, so no table is booked.
+  const reservation = state.cards.find(c => c.kind === 'reservation' && !state.dismissed.has(c.id));
+  if (reservation) return { kind: 'reservation', card: reservation };
   // In "speaking" mode answers were already said out loud: don't repeat them as cards.
+  // Except in Display Audio Mode: the answer bubble IS the visible proof it heard you.
+  // Live transcript cards are feed-only, never the hero: they arrive every ~2.5 s
+  // while someone talks, and must not steal the slot from a yes/no that needs a tap.
   const card = state.cards.find(c => !state.dismissed.has(c.id) && c.kind !== 'payment' && c.kind !== 'offer' && c.kind !== 'confirm' && c.kind !== 'order'
-    && !(state.mode === 'voice' && c.kind === 'answer'));
+    && c.kind !== 'transcript'
+    && !(state.mode === 'voice' && !state.displayAudioMode && c.kind === 'answer'));
   return card ? { kind: card.kind, card } : null;
+}
+
+// ---- Lead me there (backend: src/backend/lead.py + memory.py) ----
+// The backend pushes kind=answer cards through /feed:
+//   offer: title = the question ("Where are my keys?"),
+//          body = "<place>. Want me to lead you there?" - only when a recent frame exists
+//          (_can_lead: frame + age <= 180 min; no frame / stale sighting means no question at all)
+//   step:  title = "Leading you to <name>", body = the one-line instruction
+//   found: title = "Found: <name>", body = the arrival line (or a step saying "I can't find it")
+//   stopped: title = "Stopped" (the lead ended: nothing to pin)
+// A card that says no photo / no frame / no memory never matches: it carries no lead question
+// and no "Leading you to" title, so it renders as-is and is never offered. No location is ever
+// invented here: the place shown is the backend's own sentence, minus the question.
+// Pinning: the lead card is the hero (flex none, above the scrolling .bubbles list), so it
+// cannot scroll away, and it pins even in voice mode - the Yes pinch is the point.
+// It pins only while fresh: the backend offer window is about 15 s after Scene finishes
+// asking, and steps arrive every few seconds while leading.
+const LEAD_OFFER_S = 30;    // offer pin lifetime (backend window is ~15 s + talk time)
+const LEAD_STEP_S = 60;     // a step older than this means the lead is over
+const LEAD_NO_LEAD_RE = /no (recent )?frame|no photo|don't have a memory|haven't seen/i;
+function leadOf(c) {
+  if (!c || c.kind !== 'answer' || state.dismissed.has(c.id) || c.ts <= state.leadIgnoreBefore) return null;
+  const title = String(c.title || ''), body = String(c.body || '');
+  if (LEAD_NO_LEAD_RE.test(title + ' ' + body)) return null;
+  if (/^stopped$/i.test(title) || /no more directions/i.test(body)) return 'stopped';
+  if (/lead you there/i.test(body)) return 'offer';
+  if (/^leading you to /i.test(title)) return /can't find it/i.test(body) ? 'found' : 'step';
+  if (/^found: /i.test(title)) return 'found';
+  return null;
+}
+function leadCard() {
+  const now = Date.now() / 1000;
+  for (const c of state.cards) {   // newest first: the newest lead card decides
+    const kind = leadOf(c);
+    if (!kind) continue;
+    if (kind === 'stopped') return null;   // the lead ended: nothing to pin
+    const freshFor = kind === 'offer' ? LEAD_OFFER_S : LEAD_STEP_S;
+    if (now - c.ts > freshFor) return null;   // newest lead card is stale: older ones are staler
+    return { kind, card: c };
+  }
+  return null;
+}
+/** The pinned lead bubble: the offer with Yes / No, a live step with Stop, or the arrival line with OK. */
+function leadBubble({ kind, card: c }) {
+  const name = (String(c.title || '').match(/^leading you to (.+)/i) || [])[1]
+    || (String(c.title || '').match(/^found: (.+)/i) || [])[1] || '';
+  if (kind === 'offer') {
+    const place = String(c.body || '').replace(/\s*want me to lead you there\??\s*$/i, '').trim() || String(c.body || '');
+    return bubble('answer', `<div class="bubble-eyebrow"><span>${esc(c.title || 'Lead me there')}</span><span>${ago(c.ts)}</span></div>${speakerLine(c)}
+      <div class="bubble-title">${esc(place)}</div>
+      <div class="bubble-body">Want me to lead you there?</div>
+      <div class="row"><button class="primary" data-act="lead-yes" data-card="${c.id}">Yes, lead me there</button>
+      <button data-act="lead-no" data-card="${c.id}">No</button></div>`, true, 'lead');
+  }
+  if (kind === 'step') {
+    return bubble('answer', `<div class="bubble-eyebrow"><span>Leading you to ${esc(name)}</span><span>${ago(c.ts)}</span></div>${speakerLine(c)}
+      <div class="bubble-title">${esc(c.body)}</div>
+      <div class="row"><button class="primary" data-act="lead-stop" data-card="${c.id}">Stop</button></div>`, true, 'lead');
+  }
+  // found (arrived, or "I can't find it"): the lead is over; one tap to clear it.
+  return bubble('answer', `<div class="bubble-eyebrow"><span>${esc(c.title)}</span><span>${ago(c.ts)}</span></div>${speakerLine(c)}
+    <div class="bubble-title">${esc(c.body)}</div>
+    <div class="row"><button class="primary" data-act="lead-done" data-card="${c.id}">OK</button></div>`, true, 'lead');
+}
+// No /lead route on the backend yet: lead.try_answer only hears transcribed speech
+// (memory._lead_audio). Try the route first so these buttons light up the moment the backend
+// adds POST /lead/answer {text: yes|no} and POST /lead/stop; a 404 falls back to the working
+// path (say it out loud) instead of an error. Never claim the lead started when it didn't.
+async function leadPost(path, form) {
+  try { await api(path, 'POST', form); return true; }
+  catch { return false; }   // no route yet, or anything else: voice is the fallback
+}
+
+// TODO(face-enrollment): feed card.speaker from the backend once face enrollment /
+// matching lands (enrolled reference photos -> a recognized name -> card.speaker).
+// Until then this only fires when the backend already knows who spoke (a named sender,
+// a calendar invitee, a follow-through counterpart). Never guess a name here: no field
+// means no label, never a made-up one. Do NOT fake face recognition on the lens.
+/** Who said it, when the backend knows. Returns null when unknown (no label, never invented). */
+function speakerOf(c) {
+  if (!c) return null;
+  return c.speaker || c.from_whom || c.counterpart || null;
+}
+const speakerLine = c => { const s = speakerOf(c); return s ? `<div class="bubble-speaker">${esc(s)} said this</div>` : ''; };
+
+// ---- Conversation Mode (backend: GET /conversation, POST /conversation/start|stop;
+//      /session also carries it once the backend adds it there) ----
+// While a conversation runs the lens is a notepad, not an answer machine: the
+// header says so, transcript bubbles name who spoke (or "Unknown", never a
+// guess), and tasks extracted mid-conversation appear as draft bubbles the
+// moment the feed carries them. No face matching runs while the display is
+// open (frames are paused), so a speaker is only a name the backend already
+// knew: a face matched before the display opened, or a name spoken aloud.
+// Until the backend ships these endpoints (GET /conversation 404s), the UI
+// degrades to today's /session + /feed polling and Take notes says so.
+const CONV_ACTIVE = ['active', 'listening', 'on', 'taking_notes', 'conversation'];
+function convIsActive(d) {
+  if (!d || typeof d !== 'object') return false;
+  if (d.active === true || d.is_active === true) return true;
+  const m = String(d.mode ?? d.status ?? '').toLowerCase();
+  return CONV_ACTIVE.includes(m);
+}
+/** Who spoke: the card's own speaker when it names someone, else the
+    conversation's current speaker, else Unknown. Never a guessed name. */
+function convSpeakerName(c) {
+  const s = speakerOf(c);
+  if (s && s !== 'Unknown') return s;
+  const cs = state.conv.speaker;
+  if (cs && cs !== 'Unknown') return cs;
+  return 'Unknown';
+}
+// In Conversation Mode the speaker line always shows, even for Unknown.
+const convSpeakerLine = c => `<div class="bubble-speaker">${esc(convSpeakerName(c))} said this</div>`;
+function convUpdate(d) {
+  if (!d || typeof d !== 'object') return;
+  state.conv.available = true;
+  const was = state.conv.active;
+  const now = convIsActive(d);
+  state.conv.mode = d.mode ?? d.status ?? state.conv.mode;
+  state.conv.startedAt = d.started_at ?? d.startedAt ?? state.conv.startedAt;
+  state.conv.lastSpeechAt = d.last_speech_at ?? d.lastSpeechAt ?? state.conv.lastSpeechAt;
+  const sp = d.speaker ?? d.current_speaker ?? null;
+  if (sp) state.conv.speaker = sp;
+  if (now && !was) {   // started: (re)seed counts from the cards already on screen
+    state.convSummary = null;
+    const from = state.conv.startedAt || 0;
+    state.conv.tasks = state.cards.filter(c => c.kind === 'task' && c.ts >= from).length;
+    state.conv.lines = state.cards.filter(c => c.kind === 'transcript' && c.ts >= from).length;
+  }
+  // Backend counts win when present; otherwise keep the counters tallied from /feed.
+  const n = d.task_count ?? d.tasks_found ?? (Array.isArray(d.tasks) ? d.tasks.length : null);
+  if (typeof n === 'number') state.conv.tasks = n;
+  const l = d.lines ?? d.line_count ?? null;
+  if (typeof l === 'number') state.conv.lines = l;
+  if (!now && was) {   // ended: freeze the counts into the summary card
+    state.convSummary = { tasks: state.conv.tasks, lines: state.conv.lines, endedAt: Date.now() / 1000 };
+  }
+  state.conv.active = now;
+}
+// /session carries conversation mode once the backend adds it there; only used
+// while GET /conversation itself 404s, so an old backend never fights the new one.
+function convUpdateFromSession() {
+  const s = state.session && (state.session.conversation ?? state.session.conversation_mode ?? state.session.conversationMode);
+  if (!s) return;
+  convUpdate(typeof s === 'string' ? { mode: s } : s);
+}
+async function convStart() {
+  try {
+    convUpdate(await api('/conversation/start', 'POST'));
+    state.note = state.conv.active ? 'Taking notes.' : 'Started — waiting for the laptop to confirm.';
+  } catch (err) {
+    state.note = /404/.test(err.message) ? 'Conversation notes need the laptop backend update.'
+      : 'Couldn’t start notes: ' + err.message;
+  }
+}
+async function convStop() {
+  try {
+    convUpdate(await api('/conversation/stop', 'POST'));
+    state.note = 'Notes saved. See full notes on phone.';
+  } catch (err) {
+    state.note = /404/.test(err.message) ? 'Conversation notes need the laptop backend update.'
+      : 'Couldn’t stop notes: ' + err.message;
+  }
+}
+/** Home's hero while a conversation runs (live counts + Stop), or the summary
+    card after it ends (frozen counts + "See full notes on phone"). */
+function conversationHero() {
+  if (state.conv.active) {
+    const who = state.conv.speaker && state.conv.speaker !== 'Unknown' ? ` · ${state.conv.speaker}` : '';
+    return bubble('task', `<div class="bubble-eyebrow"><span>Taking notes${esc(who)}</span><span>${state.conv.tasks} task${state.conv.tasks === 1 ? '' : 's'}</span></div>
+      <div class="bubble-title">${state.conv.lines} line${state.conv.lines === 1 ? '' : 's'} heard</div>
+      <div class="bubble-body">Listening — tasks and quotes land below as you talk.</div>
+      <div class="row"><button class="primary" data-act="conv-stop">Stop notes</button></div>`, true, 'conv');
+  }
+  const s = state.convSummary;
+  if (!s) return null;
+  return bubble('task', `<div class="bubble-eyebrow"><span>Conversation ended</span><span>${ago(s.endedAt)}</span></div>
+    <div class="bubble-title">${s.tasks} task${s.tasks === 1 ? '' : 's'} · ${s.lines} lines noted</div>
+    <div class="bubble-body">See full notes on phone.</div>
+    <div class="row"><button class="primary" data-act="conv-dismiss-summary">OK</button></div>`, true, 'conv');
+}
+/** A task extracted mid-conversation: title, speaker, exact quote, and the
+    approve-on-phone hint. The card's body is the quote-verified task text
+    ("Send the deck (from Srijan, due 5pm)"); the parenthetical meta is split
+    off so the title stays short, and the full wording shows as the quote.
+    A backend `quote` field, when it ships, is shown instead of the body. */
+function convTaskBubble(c) {
+  const body = String(c.body || c.title || '');
+  const meta = (body.match(/\((from [^)]+)\)\s*$/) || [])[1] || '';
+  const text = body.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const title = (c.title && c.title !== 'New task') ? c.title : text;
+  const quote = c.quote || (body && body !== title ? body : null);
+  return bubble('task', `<div class="bubble-eyebrow"><span>Task · draft</span><span>${ago(c.ts)}</span></div>${convSpeakerLine(c)}
+    <div class="bubble-title">${esc(title)}</div>
+    ${quote ? `<div class="bubble-body">“${esc(quote)}”</div>` : ''}
+    ${meta ? `<div class="bubble-more">${esc(meta)}</div>` : ''}
+    <div class="bubble-more">Draft, tap to approve on phone</div>
+    <div class="row"><button data-act="dismiss" data-card="${c.id}">Later</button></div>`, false, 'conv-task');
+}
+
+/** Bubble color by kind: money butter, promises rose, tasks sky, answers mint. */
+const KIND_CLASS = { payment: 'money', order: 'money', email: 'money', calendar: 'money', slack: 'money', reservation: 'money',
+  ft: 'promise', task: 'task', offer: 'task', confirm: 'task', answer: 'answer', transcript: 'answer' };
+const KIND_LABEL = { payment: 'Payment', order: 'Order', email: 'Email', calendar: 'Calendar', slack: 'Slack', reservation: 'Reservation',
+  ft: 'Promise', task: 'Task', offer: 'Scene noticed', confirm: 'Scene asks', answer: 'Answer', transcript: 'Transcript' };
+const kindClass = k => KIND_CLASS[k] || 'answer';
+const kindLabel = k => KIND_LABEL[k] || (k ? k[0].toUpperCase() + k.slice(1) : 'Scene');
+
+/** One iMessage-style bubble. Long bodies clamp to 3 lines in CSS; the hint points at the phone. */
+const LONG_BODY = 140;
+function bubble(kind, inner, hero, extra) {
+  return `<article class="bubble ${kindClass(kind)}${hero ? ' hero' : ''}${extra ? ' ' + extra : ''}">${inner}</article>`;
+}
+
+/** One summarized point as a bubble: short title/body, speaker when known, tap row only for tasks. */
+function feedBubble(c) {
+  // Conversation Mode: tasks extracted mid-conversation render as draft bubbles
+  // (title, speaker, exact quote, approve-on-phone hint) the moment they arrive.
+  if (c.kind === 'task' && state.conv.active && (!state.conv.startedAt || c.ts >= state.conv.startedAt - 1)) return convTaskBubble(c);
+  const isAnswer = c.kind === 'answer';
+  const title = isAnswer ? c.body : (c.title || c.body);
+  const body = isAnswer ? '' : (c.title && c.body && c.body !== c.title ? c.body : '');
+  const eyebrow = isAnswer ? (c.title || 'Answer') : kindLabel(c.kind);
+  const long = (String(title) + ' ' + String(body)).length > LONG_BODY;
+  const acts = c.kind === 'task'
+    ? `<div class="row"><button class="primary" data-act="done" data-id="${c.ref}" data-card="${c.id}">Done</button><button data-act="dismiss" data-card="${c.id}">Later</button></div>` : '';
+  // In Conversation Mode a transcript bubble always names its speaker: the
+  // card's name, the conversation's current speaker, else Unknown.
+  const who = c.kind === 'transcript' && state.conv.active ? convSpeakerLine(c) : speakerLine(c);
+  return bubble(c.kind, `<div class="bubble-eyebrow"><span>${esc(eyebrow)}</span><span>${ago(c.ts)}</span></div>${who}
+    <div class="bubble-title">${esc(title)}</div>
+    ${body ? `<div class="bubble-body">${esc(body)}</div>` : ''}
+    ${long ? '<div class="bubble-more">more on phone</div>' : ''}${acts}`);
 }
 
 function home() {
   const s = spotlight();
   const ext = s?.kind === 'payment' ? null : heroes.map(f => f()).find(Boolean);
-  let hero;
+  const lead = leadCard();   // pinned above the feed while fresh; null when no lead is live
+  const convHero = conversationHero();   // live counts + Stop, or the ended summary card
+  let hero = '';
+  let usedCardId = null;   // the spotlight card, so it isn't repeated in the feed below
   if (state.answer) {
-    hero = `<div class="card answer"><div class="eyebrow">${esc(state.answer.question)}</div>
-      <div class="title">${esc(state.answer.answer)}</div>
-      <div class="row"><button class="primary" data-act="clear-answer">OK</button><button data-view="ask">Ask more</button></div></div>`;
+    hero = bubble('answer', `<div class="bubble-eyebrow"><span>${esc(state.answer.question)}</span></div>
+      <div class="bubble-title">${esc(state.answer.answer)}</div>
+      <div class="row"><button class="primary" data-act="clear-answer">OK</button><button data-view="ask">Ask more</button></div>`, true);
+  } else if (lead) {   // Lead me there pins above everything except your own Ask answer: a fresh offer
+    usedCardId = lead.card.id;   // or a live step must not scroll away while you walk to it.
+    hero = leadBubble(lead);
   } else if (s?.kind === 'payment') {
-    hero = `<div class="card payment"><div class="eyebrow">${esc(s.pay.counterparty || 'Someone')} owes you, for ${esc(s.pay.memo)}</div>
+    hero = bubble('payment', `<div class="bubble-eyebrow"><span>${esc(s.pay.counterparty || 'Someone')} owes you, for ${esc(s.pay.memo)}</span></div>
       <div class="big">${usd(s.pay.amount_cents)}</div>
-      <div class="body">Request it? Your phone shows them a QR.</div>
+      <div class="bubble-body">Request it? Your phone shows them a QR.</div>
       <div class="row"><button class="primary" data-act="approve" data-id="${s.pay.id}">Approve</button>
-      <button data-act="reject" data-id="${s.pay.id}">Not now</button></div></div>`;
+      <button data-act="reject" data-id="${s.pay.id}">Not now</button></div>`, true);
   } else if (s?.kind === 'confirm') {
-    hero = `<div class="card task"><div class="eyebrow">Scene asks</div>
-      <div class="title">${esc(s.card.body)}</div>
+    usedCardId = s.card.id;
+    hero = bubble('confirm', `<div class="bubble-eyebrow"><span>Scene asks</span><span>${ago(s.card.ts)}</span></div>${speakerLine(s.card)}
+      <div class="bubble-title">${esc(s.card.body)}</div>
       <div class="row"><button class="primary" data-act="agent-yes" data-card="${s.card.id}">Yes</button>
-      <button data-act="agent-no" data-card="${s.card.id}">No</button></div></div>`;
+      <button data-act="agent-no" data-card="${s.card.id}">No</button></div>`, true);
   } else if (s?.kind === 'order') {
-    hero = `<div class="card payment"><div class="eyebrow">${esc(s.card.title)}</div>
-      <div class="title">${esc(s.card.body)}</div>
+    usedCardId = s.card.id;
+    hero = bubble('order', `<div class="bubble-eyebrow"><span>${esc(s.card.title)}</span><span>${ago(s.card.ts)}</span></div>${speakerLine(s.card)}
+      <div class="bubble-title">${esc(s.card.body)}</div>
       <div class="row"><button class="primary" data-act="order-pay" data-id="${s.card.ref}" data-card="${s.card.id}">Pay</button>
-      <button data-act="order-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
+      <button data-act="order-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div>`, true);
   } else if (s?.kind === 'offer') {
-    hero = `<div class="card task"><div class="eyebrow">Scene noticed</div>
-      <div class="title">${esc(s.card.body)}</div>
+    usedCardId = s.card.id;
+    hero = bubble('offer', `<div class="bubble-eyebrow"><span>Scene noticed</span><span>${ago(s.card.ts)}</span></div>${speakerLine(s.card)}
+      <div class="bubble-title">${esc(s.card.body)}</div>
       <div class="row"><button class="primary" data-act="offer-yes" data-id="${s.card.ref}" data-card="${s.card.id}">Yes, take notes</button>
-      <button data-act="offer-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
+      <button data-act="offer-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div>`, true);
   } else if (s?.kind === 'slack') {
-    hero = `<div class="card payment"><div class="eyebrow">${esc(s.card.title)}</div>
-      <div class="title">${esc(s.card.body)}</div>
+    usedCardId = s.card.id;
+    hero = bubble('slack', `<div class="bubble-eyebrow"><span>${esc(s.card.title)}</span><span>${ago(s.card.ts)}</span></div>${speakerLine(s.card)}
+      <div class="bubble-title">${esc(s.card.body)}</div>
       <div class="row"><button class="primary" data-act="slack-send" data-id="${s.card.ref}" data-card="${s.card.id}">Send</button>
-      <button data-act="slack-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
+      <button data-act="slack-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div>`, true);
   } else if (s?.kind === 'email') {
-    hero = `<div class="card payment"><div class="eyebrow">${esc(s.card.title)}</div>
-      <div class="title">${esc(s.card.body)}</div>
+    usedCardId = s.card.id;
+    hero = bubble('email', `<div class="bubble-eyebrow"><span>${esc(s.card.title)}</span><span>${ago(s.card.ts)}</span></div>${speakerLine(s.card)}
+      <div class="bubble-title">${esc(s.card.body)}</div>
       <div class="row"><button class="primary" data-act="email-send" data-id="${s.card.ref}" data-card="${s.card.id}">Send</button>
-      <button data-act="email-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
+      <button data-act="email-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div>`, true);
   } else if (s?.kind === 'calendar') {
-    hero = `<div class="card payment"><div class="eyebrow">${esc(s.card.title)}</div>
-      <div class="title">${esc(s.card.body)}</div>
+    usedCardId = s.card.id;
+    hero = bubble('calendar', `<div class="bubble-eyebrow"><span>${esc(s.card.title)}</span><span>${ago(s.card.ts)}</span></div>${speakerLine(s.card)}
+      <div class="bubble-title">${esc(s.card.body)}</div>
       <div class="row"><button class="primary" data-act="event-add" data-id="${s.card.ref}" data-card="${s.card.id}">Add it</button>
-      <button data-act="event-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div></div>`;
+      <button data-act="event-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div>`, true);
+  } else if (s?.kind === 'reservation') {
+    usedCardId = s.card.id;
+    hero = bubble('reservation', `<div class="bubble-eyebrow"><span>${esc(s.card.title)}</span><span>${ago(s.card.ts)}</span></div>${speakerLine(s.card)}
+      <div class="bubble-title">${esc(s.card.body)}</div>
+      <div class="row"><button class="primary" data-act="reservation-confirm" data-id="${s.card.ref}" data-card="${s.card.id}">Confirm</button>
+      <button data-act="reservation-no" data-id="${s.card.ref}" data-card="${s.card.id}">Not now</button></div>`, true);
+  } else if (convHero) {
+    hero = convHero;   // Conversation Mode beats the notes-session hero: same job, live counts
   } else if (ext) {
-    hero = ext;
-  } else if (!s) {
-    hero = `<div class="card calm"><div class="glow"></div>
-      <div class="title">Nothing needs you.</div>
-      <div class="body">${state.things.length ? `Keeping track of ${state.things.length} thing${state.things.length === 1 ? '' : 's'} today.` : 'Scene is remembering.'} Say “hey scene” anytime.</div></div>`;
-  } else if (s.kind === 'task') {
-    hero = `<div class="card task"><div class="eyebrow">You were asked to</div>
-      <div class="title">${esc(s.card.body)}</div>
+    hero = ext;   // extension cards (notes session, order progress, follow-through) keep their own
+                  // markup; CSS gives them the bubble treatment. The spotlight card stays in the feed.
+  } else if (s?.kind === 'task') {
+    usedCardId = s.card.id;
+    hero = bubble('task', `<div class="bubble-eyebrow"><span>You were asked to</span><span>${ago(s.card.ts)}</span></div>${speakerLine(s.card)}
+      <div class="bubble-title">${esc(s.card.body)}</div>
       <div class="row"><button class="primary" data-act="done" data-id="${s.card.ref}" data-card="${s.card.id}">Done</button>
-      <button data-act="dismiss" data-card="${s.card.id}">Later</button></div></div>`;
-  } else {
-    hero = `<div class="card answer"><div class="eyebrow">${esc(s.card.title)}</div>
-      <div class="title">${esc(s.card.body)}</div>
-      <div class="row"><button class="primary" data-act="dismiss" data-card="${s.card.id}">OK</button></div></div>`;
+      <button data-act="dismiss" data-card="${s.card.id}">Later</button></div>`, true);
+  } else if (s) {
+    usedCardId = s.card.id;
+    hero = bubble(s.kind, `<div class="bubble-eyebrow"><span>${esc(s.card.title)}</span><span>${ago(s.card.ts)}</span></div>${speakerLine(s.card)}
+      <div class="bubble-title">${esc(s.card.body)}</div>
+      <div class="row"><button class="primary" data-act="dismiss" data-card="${s.card.id}">OK</button></div>`, true);
   }
+  // The feed under the hero: newest at the bottom, max 4 bubbles on screen (hero + 3, or 4 alone).
+  const feed = state.cards
+    .filter(c => !state.dismissed.has(c.id) && c.id !== usedCardId && !(state.mode === 'voice' && !state.displayAudioMode && c.kind === 'answer'))
+    .slice(0, hero ? 3 : 4).map(feedBubble).join('');
   const approved = state.payments.find(p => p.status === 'approved');
-  return `<div class="stage">${hero}</div>` +
+  // Mic-silent honesty: no real (non-silent) audio for 10 s while the display is
+  // open means the phone mic went dead after the display opened. Say so on the
+  // lens instead of pretending it heard him. audioAgeS is null until any sound.
+  const micSilent = state.displayAudioMode && state.audioAgeS != null && state.audioAgeS > 10;
+  const micHint = micSilent ? '<div class="bubble-more">Mic silent — tap Start on the phone to retry</div>' : '';
+  const calmLine = state.displayAudioMode
+    ? 'Listening (audio only, camera off) — say \'hey scene\' anytime'
+    : 'Scene is remembering';
+  // Take notes / Stop notes, always one pinch away on Home (the hero also has Stop).
+  const convRow = `<div class="row"><button class="${state.conv.active ? '' : 'primary'}" data-act="conv-toggle">${state.conv.active ? 'Stop notes' : 'Take notes'}</button></div>`;
+  const stage = hero || feed
+    ? `<div class="stage bubbles-stage">${micHint}${convRow}${hero}${!scrollHintSeen ? '<div class="scroll-hint">Swipe up/down to scroll</div>' : ''}<div class="bubbles">${feed}</div></div>`
+    : `<div class="stage"><div class="calm-line">${calmLine}</div>${micHint}${convRow}</div>`;
+  return stage +
     (approved ? `<div class="hint">Waiting on ${usd(approved.amount_cents)} from ${esc(approved.counterparty || 'someone')}. QR is on your phone.</div>` : '') +
     `<nav class="dock">${dockItem('ask', 'Ask')}${dockItem('tasks', 'Tasks', state.tasks.length)}${dockItem('things', 'Things', state.things.length)}${navTiles.map(f => f()).join('')}${dockItem('recent', 'Recent')}</nav>`;
 }
 
 function tasks() {
-  const items = state.tasks.slice(0, 4).map(t =>
+  const items = state.tasks.slice(0, 12).map(t =>
     `<button class="item" data-act="done" data-id="${t.id}">${esc(t.text)}<small>${ago(t.ts)}, pinch when done</small></button>`).join('');
   return `<h2>Tasks</h2><div class="list">${items || '<div class="empty">Nothing open. Promises you make show up here.</div>'}</div>
     <div class="row nav"><button data-view="home">Back</button></div>`;
 }
 
 function things() {
-  const items = state.things.slice(0, 4).map(t =>
+  const items = state.things.slice(0, 12).map(t =>
     `<div class="item" tabindex="0">${esc(t.name[0].toUpperCase() + t.name.slice(1))}<small>${esc(t.place || '')}, ${ago(t.ts)}</small></div>`).join('');
   return `<h2>Things</h2><div class="list">${items || '<div class="empty">Nothing seen yet. Look around for a few seconds.</div>'}</div>
     <div class="row nav"><button data-view="home">Back</button></div>`;
@@ -180,8 +572,8 @@ function ask() {
 }
 
 function recent() {
-  const items = state.cards.slice(0, 4).map(c =>
-    `<div class="item" tabindex="0">${esc(c.kind === 'answer' ? c.body : c.title)}<small>${esc(c.kind === 'answer' ? c.title : c.body)}, ${ago(c.ts)}</small></div>`).join('');
+  const items = state.cards.slice(0, 12).map(c =>
+    `<div class="item" tabindex="0">${esc(c.kind === 'answer' ? c.body : c.title)}<small>${speakerOf(c) ? esc(speakerOf(c)) + ' · ' : ''}${esc(c.kind === 'answer' ? c.title : c.body)}, ${ago(c.ts)}</small></div>`).join('');
   return `<h2>Recent</h2><div class="list">${items || '<div class="empty">Nothing yet today.</div>'}</div>
     <div class="row nav"><button data-view="home">Back</button></div>`;
 }
@@ -223,14 +615,36 @@ function settings() {
 }
 
 function render() {
-  const header = `<header>${STAR}<h1>Scene</h1><button class="gear" data-view="settings" aria-label="Settings">${icon('settings')}</button><span class="status"><span class="dot ${state.online ? (state.settings?.paused ? 'paused' : '') : 'off'}"></span>${!state.online ? 'Offline' : state.settings?.paused ? 'Paused' : 'Live'}</span></header>`;
+  // Display Audio Mode gets its own status so he can tell at a glance whether
+  // the camera is also running (Live) or only the mic is (Listening, audio only).
+  const modeText = !state.online ? 'Offline' : state.settings?.paused ? 'Paused'
+    : state.conv.active ? 'Listening, taking notes'
+    : state.displayAudioMode ? 'Listening · audio only' : 'Live';
+  const header = `<header>${STAR}<h1>Scene</h1><button class="gear" data-view="settings" aria-label="Settings">${icon('settings')}</button><span class="status"><span class="dot ${state.online ? (state.settings?.paused ? 'paused' : '') : 'off'}"></span>${modeText}</span></header>`;
   const firstRun = state.online && state.mode == null;
   const body = firstRun ? mode() : ({ home, tasks, things, ask, recent, mode, settings, ...views }[state.view] || home)();
   const html = header + (state.note ? `<div class="body">${esc(state.note)}</div>` : '') + body;
   if (html === lastHTML) return;   // don't re-render (and steal focus) when nothing changed
   const key = el => (el?.dataset?.act || '') + (el?.dataset?.id || '') + (el?.dataset?.view || '') + (el?.dataset?.q || '');
   const focusKey = key(document.activeElement);
+  const prevScroll = scrollableEl()?.scrollTop ?? 0;   // keep a manual swipe position across polls (any list, not just Home)
   $app.innerHTML = lastHTML = html;
+  // Home's bubble list is newest-at-bottom: keep the newest in view, unless a hero
+  // bubble needs a tap (then it stays pinned at the top instead of scrolling away).
+  // Check for a real hero element, not firstElementChild: the scroll hint and the
+  // mic-silent hint also sit above .bubbles and must not count as a hero, or the
+  // list would stick at the top (oldest) instead of showing the newest bubble.
+  const bubbles = $app.querySelector('.bubbles');
+  if (bubbles) {
+    const hasHero = !!$app.querySelector('.bubbles-stage > .bubble.hero, .bubbles-stage > .card');
+    if (hasHero) bubbles.scrollTop = Math.min(prevScroll, Math.max(0, bubbles.scrollHeight - bubbles.clientHeight));
+    else bubbles.scrollTop = bubbles.scrollHeight;
+  } else {
+    // Any other list (Tasks, Promises, Today, ...): the 2 s poll re-renders the
+    // whole screen, so restore the swipe position instead of snapping to the top.
+    const list = $app.querySelector('.list');
+    if (list) list.scrollTop = Math.min(prevScroll, Math.max(0, list.scrollHeight - list.clientHeight));
+  }
   const focusables = [...$app.querySelectorAll('button, .item')];
   // Keep the focused control only when the same screen re-renders (a poll); a new screen starts fresh.
   const sameScreen = renderedView === (firstRun ? 'first-run' : state.view);
@@ -248,6 +662,9 @@ $app.addEventListener('click', async e => {
   if (view) { state.view = view; render(); return; }
   try {
     if (actions[act]) await actions[act](el.dataset);
+    if (act === 'conv-toggle') { if (state.conv.active) await convStop(); else await convStart(); }
+    if (act === 'conv-stop') await convStop();
+    if (act === 'conv-dismiss-summary') state.convSummary = null;
     if (act === 'set-mode') { await api('/settings', 'POST', { output: q }); state.mode = q; state.view = 'home'; }
     if (act === 'set-output') state.settings = await api('/settings', 'POST', { output: NEXT(['cards', 'voice', 'both'], state.mode || 'both') });
     if (act === 'set-speak-on') state.settings = await api('/settings', 'POST', { speak_on: NEXT(['glasses', 'laptop', 'both'], state.settings?.speak_on || 'glasses') });
@@ -262,6 +679,19 @@ $app.addEventListener('click', async e => {
     if (act === 'reject') await api(`/payments/${id}/reject`, 'POST');
     if (act === 'done' && id) await api(`/tasks/${id}/done`, 'POST');
     if (act === 'agent-yes' || act === 'agent-no') await api('/agent/reply', 'POST', { text: act === 'agent-yes' ? 'yes' : 'no' }).catch(() => {});
+    if (act === 'lead-yes' || act === 'lead-no') {
+      const yes = act === 'lead-yes';
+      const handled = await leadPost('/lead/answer', { text: yes ? 'yes' : 'no' });
+      state.leadIgnoreBefore = Date.now() / 1000;   // older lead cards must not re-pin
+      state.note = handled ? (yes ? 'Leading you there.' : 'Okay, not leading.')
+        : 'Say "' + (yes ? 'yes' : 'no') + '" out loud to answer.';
+    }
+    if (act === 'lead-stop') {
+      const handled = await leadPost('/lead/stop');
+      state.leadIgnoreBefore = Date.now() / 1000;
+      state.note = handled ? 'Stopped.' : 'Say "stop" out loud.';
+    }
+    if (act === 'lead-done') state.leadIgnoreBefore = Date.now() / 1000;
     if (act === 'order-pay') {
       await api(`/orders/${id}/approve`, 'POST');
       state.note = `Pay on your phone: ${location.origin}/order/${id}`;
@@ -278,6 +708,11 @@ $app.addEventListener('click', async e => {
       state.note = d.status === 'sent' ? d.result : d.status === 'drafted' ? d.result : 'Not added: ' + d.result;
     }
     if (act === 'event-no') await api(`/events/${id}/dismiss`, 'POST').catch(() => {});
+    if (act === 'reservation-confirm') {
+      const d = await api(`/reservations/${id}/confirm`, 'POST');
+      state.note = d.status === 'drafted' ? 'Draft confirmed. No table booked, call the restaurant to book.' : 'Not confirmed: ' + (d.result || '');
+    }
+    if (act === 'reservation-no') await api(`/reservations/${id}/dismiss`, 'POST').catch(() => {});
     if (act === 'slack-send') {
       const d = await api(`/slack/${id}/send`, 'POST');
       state.note = d.result;
@@ -299,13 +734,66 @@ $app.addEventListener('click', async e => {
 });
 
 // D-pad: arrows move focus through whatever is on screen; Enter/pinch clicks it.
+// ArrowUp/ArrowDown also scroll the current list one item, on every screen, so
+// the same move works in a browser as a fallback for the temple swipe.
 document.addEventListener('keydown', e => {
   const list = [...$app.querySelectorAll('button, .item')];
   const i = list.indexOf(document.activeElement);
-  if (['ArrowDown', 'ArrowRight'].includes(e.key)) { list[(i + 1) % list.length]?.focus(); e.preventDefault(); }
-  if (['ArrowUp', 'ArrowLeft'].includes(e.key)) { list[(i - 1 + list.length) % list.length]?.focus(); e.preventDefault(); }
+  if (['ArrowDown', 'ArrowRight'].includes(e.key)) { if (e.key === 'ArrowDown') scrollCurrent(1); list[(i + 1) % list.length]?.focus(); e.preventDefault(); }
+  if (['ArrowUp', 'ArrowLeft'].includes(e.key)) { if (e.key === 'ArrowUp') scrollCurrent(-1); list[(i - 1 + list.length) % list.length]?.focus(); e.preventDefault(); }
   if (e.key === 'Enter' && document.activeElement?.classList.contains('item')) document.activeElement.click();
   if (e.key === 'Escape' || e.key === 'Backspace') { state.view = 'home'; render(); }
+});
+
+// Volume-style swipe, on every screen: temple swipe forward (up) / back (down)
+// arrives here as a touch swipe. One swipe = one item, then the gesture ends;
+// a second swipe moves another item. Wheel is the same move in a browser,
+// throttled to one step. This used to return early on any non-Home view, so
+// Tasks / Promises / Today could not be swiped at all.
+let swipeY = null, swipeX = null, swipeDone = false;
+document.addEventListener('touchstart', e => {
+  const t = e.changedTouches[0];
+  swipeY = t.clientY; swipeX = t.clientX; swipeDone = false;
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (swipeY == null || swipeDone) return;
+  const t = e.changedTouches[0];
+  const dy = t.clientY - swipeY, dx = t.clientX - swipeX;
+  if (Math.abs(dy) > 24 && Math.abs(dy) > Math.abs(dx) * 1.5) {
+    e.preventDefault();   // stop the native scroll so the list snaps one item
+    swipeDone = true;
+    scrollCurrent(dy > 0 ? 1 : -1);   // swipe down = volume down = list down
+  }
+}, { passive: false });
+document.addEventListener('touchend', e => {
+  if (swipeY == null || swipeDone) { swipeY = swipeX = null; return; }
+  const t = e.changedTouches[0];
+  const dy = t.clientY - swipeY, dx = t.clientX - swipeX;
+  if (Math.abs(dy) > 50 && Math.abs(dy) > Math.abs(dx) * 1.5) scrollCurrent(dy > 0 ? 1 : -1);
+  swipeY = swipeX = null;
+}, { passive: true });
+let lastWheelAt = 0;
+$app.addEventListener('wheel', e => {
+  const el = scrollableEl();
+  if (!el || el.scrollHeight <= el.clientHeight + 1) return;
+  e.preventDefault();
+  const now = Date.now();
+  if (now - lastWheelAt < 250 || Math.abs(e.deltaY) < 4) return;   // one notch = one item
+  lastWheelAt = now;
+  scrollCurrent(e.deltaY > 0 ? 1 : -1);
+}, { passive: false });
+
+// Display Audio Mode heartbeat: this web app being open is the only reliable
+// signal the display is on (the phone SDK has no signal for it). The backend
+// treats a fresh heartbeat as "display open: pause frames, keep the iPhone mic".
+// It expires 25 s after the last beat, so a closed or crashed web app resumes
+// normal capture on its own. Beacon, not fetch: it must also fire on pagehide.
+function displayHeartbeat() {
+  try { navigator.sendBeacon('/display/heartbeat'); } catch {}
+  postFocus();   // keep the current focus fresh while the display is open
+}
+window.addEventListener('pagehide', () => {
+  try { navigator.sendBeacon('/display/close'); } catch {}
 });
 
 // Start after every script has loaded, so extensions are registered before the first render.
@@ -317,6 +805,8 @@ function sendLocation() {
 window.addEventListener('load', () => {
   sendLocation();
   setInterval(sendLocation, 300000);
+  displayHeartbeat();
+  setInterval(displayHeartbeat, 15000);
   poll();
   setInterval(poll, 2000);   // one light poll, not an animation loop: fine for the 30 Hz panel
 });

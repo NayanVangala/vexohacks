@@ -88,6 +88,7 @@ struct InboxCard: View {
     let store: MemoryStore
     @Environment(\.openURL) private var openURL
     @State private var busy: String?
+    @State private var showDetail = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -103,6 +104,7 @@ struct InboxCard: View {
             if !item.body.isEmpty {
                 Text(item.body).font(.subheadline).foregroundStyle(Theme.inkSoft).lineLimit(4)
             }
+            Text("Tap for full detail \u{203A}").font(.caption).foregroundStyle(Theme.inkFaint)
             if !item.actions.isEmpty {
                 HStack(spacing: 10) {
                     ForEach(item.actions, id: \.self) { a in
@@ -136,6 +138,116 @@ struct InboxCard: View {
                 .buttonStyle(.squish)
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture { showDetail = true }
+        .sheet(isPresented: $showDetail) { InboxDetailSheet(item: item, store: store) }
+    }
+}
+
+// MARK: - Needs you detail (tap a card: what was actually said)
+//
+// Same rule as the To do detail: title, who said it, when, the exact quote
+// verbatim, and the description from the verbatim transcript around it.
+// A promise's quote comes from Follow-Through; anything else shows its
+// draft text as the description and says plainly when no quote was saved.
+struct InboxDetailSheet: View {
+    let item: InboxItem
+    let store: MemoryStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var busy: String?
+
+    private var promise: Promise? { item.type == "promise" ? store.promise(id: item.ref) : nil }
+    private var speaker: String? { promise.map(MemoryStore.promiseSpeaker) ?? nil }
+    private var quote: String? {
+        if let q = promise?.quote, !q.isEmpty { return q }
+        if item.type == "promise" {
+            // The Needs you row already renders the quote as the body, in quotes.
+            let b = item.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if b.hasPrefix("\u{201C}") && b.hasSuffix("\u{201D}") && b.count > 2 { return String(b.dropFirst().dropLast()) }
+        }
+        return nil
+    }
+    private var context: [String] { promise.map(store.ftContext) ?? [] }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Eyebrow(InboxStyle.label(item.type))
+                Text(item.title).font(.title2.weight(.semibold)).foregroundStyle(Theme.ink)
+                if let who = speaker {
+                    Text("\(who) said this").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                } else if item.type == "promise" {
+                    Text("Who said it was not recorded.").font(.subheadline).foregroundStyle(Theme.inkSoft)
+                }
+                if let p = promise, let d = p.dueLocal, !d.isEmpty {
+                    Text("Due \(d)").font(.subheadline).foregroundStyle(Theme.inkSoft)
+                } else if item.type != "promise" {
+                    Text(Date(timeIntervalSince1970: item.ts), format: .relative(presentation: .named))
+                        .font(.subheadline).foregroundStyle(Theme.inkSoft)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Eyebrow("Exactly what was said")
+                    if let q = quote, !q.isEmpty {
+                        Text("\u{201C}\(q)\u{201D}").font(.body.italic()).foregroundStyle(Theme.ink)
+                    } else {
+                        Text("No exact quote saved for this one.").font(.body).foregroundStyle(Theme.inkSoft)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Eyebrow("Description")
+                    if let s = promise?.summary, !s.isEmpty {
+                        Text(s).font(.body).foregroundStyle(Theme.ink)
+                    }
+                    ForEach(context, id: \.self) { line in
+                        Text(line).font(.subheadline).foregroundStyle(Theme.inkSoft)
+                    }
+                    if item.type != "promise", !item.body.isEmpty {
+                        Text(item.body).font(.body).foregroundStyle(Theme.ink)
+                    } else if let b = promise?.body, !b.isEmpty {
+                        Text(b).font(.body).foregroundStyle(Theme.ink)
+                    } else if context.isEmpty && (promise?.summary ?? "").isEmpty {
+                        Text("No conversation around this one was saved.").font(.body).foregroundStyle(Theme.inkSoft)
+                    }
+                    if let r = promise?.result, !r.isEmpty {
+                        Text("Result: \(r)").font(.subheadline).foregroundStyle(Theme.inkSoft)
+                    }
+                    if let issues = promise?.issues, !issues.isEmpty {
+                        Text("Needs a look: \(issues.joined(separator: "; "))").font(.subheadline).foregroundStyle(Theme.inkSoft)
+                    }
+                }
+                if !item.actions.isEmpty {
+                    HStack(spacing: 10) {
+                        ForEach(item.actions, id: \.self) { a in
+                            Button {
+                                busy = a.label
+                                Task { await store.perform(a, on: item); busy = nil; dismiss() }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if busy == a.label { ProgressView().controlSize(.small).tint(a.primary ? Theme.card : Theme.ink) }
+                                    Text(a.label).font(.subheadline.weight(.semibold))
+                                }
+                                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                                .foregroundStyle(a.primary ? Theme.card : Theme.ink)
+                                .background(a.primary ? Theme.ink : .clear, in: Capsule())
+                                .overlay(Capsule().stroke(Theme.ink.opacity(a.primary ? 0 : 0.25)))
+                            }
+                            .buttonStyle(.squish).disabled(busy != nil)
+                        }
+                    }
+                }
+                Button { dismiss() } label: {
+                    Text("Close").font(.headline)
+                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .foregroundStyle(Theme.ink)
+                        .overlay(Capsule().stroke(Theme.ink.opacity(0.25)))
+                }
+                .buttonStyle(.squish).disabled(busy != nil)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Theme.canvas.ignoresSafeArea())
+        .presentationDetents([.medium, .large])
     }
 }
 
@@ -252,135 +364,7 @@ struct ActivitySection: View {
     }
 }
 
-// MARK: - Follow-through (every promise Follow-Through found, and what happened to it)
 
-struct PromisesSection: View {
-    let store: MemoryStore
-
-    var body: some View {
-        if !store.promises.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Eyebrow("Promises you made")
-                VStack(spacing: -Theme.overlap) {
-                    ForEach(Array(store.promises.enumerated()), id: \.element.id) { i, p in
-                        StackCard(color: color(p), index: i) { PromiseCard(promise: p, store: store) }
-                            .scrollDepth()
-                    }
-                }
-                .animation(.spring(response: 0.5, dampingFraction: 0.85), value: store.promises)
-            }
-        }
-    }
-
-    private func color(_ p: Promise) -> Color {
-        switch p.status {
-        case "done", "drafted": Theme.mint
-        case "failed", "needs_review": Theme.butter
-        default: Theme.rose
-        }
-    }
-}
-
-private struct PromiseCard: View {
-    let promise: Promise
-    let store: MemoryStore
-    @Environment(\.openURL) private var openURL
-    @State private var busy: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Eyebrow(state)
-                Spacer()
-                Image(systemName: icon).font(.footnote.weight(.semibold)).foregroundStyle(Theme.inkSoft)
-            }
-            Text(promise.title).font(.title3.weight(.semibold)).foregroundStyle(Theme.ink)
-            if let meta { Text(meta).font(.footnote).foregroundStyle(Theme.inkSoft) }
-            if let q = promise.quote, !q.isEmpty {
-                Text("\u{201C}\(q)\u{201D}").font(.subheadline.italic()).foregroundStyle(Theme.inkSoft).lineLimit(3)
-            }
-            if promise.status == "needs_review", let issues = promise.issues, !issues.isEmpty {
-                Label(issues.joined(separator: "; ").capitalizedFirst, systemImage: "exclamationmark.circle")
-                    .font(.footnote).foregroundStyle(Theme.ink)
-            }
-            if let r = promise.result, !r.isEmpty, ["done", "drafted", "failed"].contains(promise.status) {
-                Text(r).font(.footnote).foregroundStyle(Theme.ink.opacity(0.75))
-            }
-            HStack(spacing: 10) {
-                switch promise.status {
-                case "pending":
-                    button("Approve", "approve", primary: true)
-                    button("Not now", "dismiss")
-                case "needs_review":
-                    button("Not now", "dismiss")
-                case "failed":
-                    button("Try again", "retry", primary: true)
-                default:
-                    EmptyView()
-                }
-            }
-            if let link = promise.link, let url = URL(string: link), promise.status == "drafted" {
-                Button { openURL(url) } label: {
-                    Label("Open draft", systemImage: "arrow.up.right").font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Theme.ink)
-                }
-                .buttonStyle(.squish)
-            }
-        }
-    }
-
-    private var state: String {
-        switch promise.status {
-        case "pending": "Waiting on your yes"
-        case "needs_review": "Needs a look"
-        case "done": "Done"
-        case "drafted": "Drafted"
-        case "failed": "Didn\u{2019}t go through"
-        default: promise.status
-        }
-    }
-
-    private var icon: String {
-        switch promise.action {
-        case "email", "reply": "envelope"
-        case "calendar": "calendar"
-        default: "checklist"
-        }
-    }
-
-    /// "To Sam · Tue 4:00 PM"
-    private var meta: String? {
-        var bits: [String] = []
-        if let c = promise.counterpart, !c.isEmpty { bits.append("With \(c)") }
-        if let d = promise.dueLocal, !d.isEmpty {
-            let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm"
-            bits.append(f.date(from: d).map { $0.formatted(.dateTime.weekday(.abbreviated).hour().minute()) } ?? d)
-        }
-        return bits.isEmpty ? nil : bits.joined(separator: ", ")
-    }
-
-    private func button(_ label: String, _ verb: String, primary: Bool = false) -> some View {
-        Button {
-            busy = verb
-            Task { await store.promise(promise.id, verb); busy = nil }
-        } label: {
-            HStack(spacing: 6) {
-                if busy == verb { ProgressView().controlSize(.small).tint(primary ? Theme.card : Theme.ink) }
-                Text(label).font(.subheadline.weight(.semibold))
-            }
-            .frame(maxWidth: .infinity).padding(.vertical, 13)
-            .foregroundStyle(primary ? Theme.card : Theme.ink)
-            .background(primary ? Theme.ink : .clear, in: Capsule())
-            .overlay(Capsule().stroke(Theme.ink.opacity(primary ? 0 : 0.25)))
-        }
-        .buttonStyle(.squish)
-        .disabled(busy != nil)
-    }
-}
-
-private extension String {
-    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
-}
 
 // MARK: - Orders: where to pick it up, on a map
 

@@ -246,6 +246,30 @@ final class WearablesManager {
     private var recoveryTask: Task<Void, Never>?
     private var recoveryAttempt = 0
 
+    /// Display Audio Mode: the glasses web app is open, so the device ended the
+    /// DAT session on purpose. While this is true, a `.stopped` session must NOT
+    /// be rebuilt — recovery would fight the display for the camera. Audio keeps
+    /// running on the glasses mic (BridgeController owns that half).
+    private(set) var displayAudioMode = false
+
+    /// Called when the display opens: cancel any recovery already in flight and
+    /// hold off rebuilding until the display closes.
+    func suspendRecoveryForDisplay() {
+        displayAudioMode = true
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        BridgeState.log("display audio mode: session recovery suspended (display owns the camera)")
+    }
+
+    /// Called when the display closes: if the stream is gone, rebuild it now
+    /// instead of waiting for the next unexpected stop.
+    func resumeRecoveryAfterDisplay() {
+        displayAudioMode = false
+        guard isStarted, stream == nil else { return }
+        BridgeState.log("display closed: rebuilding the camera session")
+        handleUnexpectedSessionStop()
+    }
+
     /// Capped backoff. Early attempts are fast because the common causes clear in
     /// seconds (a transient companion-app drop); the ceiling stops a genuinely
     /// wedged device — folded glasses, app removed in Meta AI — from being
@@ -990,6 +1014,10 @@ final class WearablesManager {
     /// Called for every `.stopped`. Filters out the ones we caused ourselves.
     private func handleUnexpectedSessionStop() {
         guard isStarted, !isTearingDown else { return }   // user pressed Stop
+        guard !displayAudioMode else {                     // display opened: hold, do not rebuild
+            BridgeState.log("session ended while the display is open — holding, audio only")
+            return
+        }
         guard !isStartingUp else { return }               // start()'s own retry loop owns this
         guard recoveryTask == nil else { return }         // already recovering
         BridgeState.log("!! session ended by device — auto-recovery starting")
@@ -997,14 +1025,17 @@ final class WearablesManager {
     }
 
     private func runRecovery() async {
-        while isStarted, !isTearingDown {
+        while isStarted, !isTearingDown, !displayAudioMode {
             recoveryAttempt += 1
             let delay = Self.recoveryDelay(forAttempt: recoveryAttempt)
             BridgeState.setConnection(.reconnecting)
             BridgeState.log("recovery: attempt \(recoveryAttempt) in \(delay)")
 
             try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, isStarted, !isTearingDown else { break }
+            guard !Task.isCancelled, isStarted, !isTearingDown, !displayAudioMode else {
+                if displayAudioMode { BridgeState.log("recovery: display opened — holding, audio only") }
+                break
+            }
 
             await teardownSessionArtifacts()
 

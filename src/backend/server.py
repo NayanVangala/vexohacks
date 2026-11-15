@@ -15,6 +15,8 @@ Memory (memory.py, needs GEMINI_API_KEY; OPENAI_API_KEY optional; without Gemini
   GET  /tasks            open tasks        POST /tasks/{id}/done
   GET  /items            last place of each object
   GET  /feed?after=N     cards for the glasses (answers, new tasks, payments to approve)
+  GET  /unknown-face    who-was-that prompt after a conversation (unknown face saved during it)
+  POST /unknown-face/enroll {name}  enroll the saved frame under that name; /unknown-face/dismiss discards it
   GET  /payments ...     see payments.py; approve is the human-in-the-loop gate
   GET  /frames/<name>    saved frames (thumbnails; set PUBLIC_BASE_URL to an HTTPS tunnel for the display)
 
@@ -35,6 +37,7 @@ from pydantic import BaseModel, Field
 
 import contacts
 import inbox
+import lead
 import orders
 import outbox
 import memory
@@ -42,6 +45,7 @@ import models
 import notes
 import payments
 import voice
+from awareness import parse_yes_no
 
 DATA_DIR = Path(os.environ.get("SCENE_DATA_DIR", Path(__file__).parent / "data"))
 PORT = int(os.environ.get("PORT", "8001"))
@@ -51,6 +55,9 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")  # HTTPS tun
 app = FastAPI(title="scene receiver")
 (DATA_DIR / "frames").mkdir(parents=True, exist_ok=True)
 app.mount("/frames", StaticFiles(directory=DATA_DIR / "frames"), name="frames")
+# Enrolled face photos (data/faces). Served so the phone can show who is enrolled; no matching runs on them.
+(DATA_DIR / "faces").mkdir(parents=True, exist_ok=True)
+app.mount("/faces", StaticFiles(directory=DATA_DIR / "faces"), name="faces")
 # The Meta Ray-Ban Display web app (src/glasses/). Same origin as the API, so the glasses need
 # only this one HTTPS URL (the tunnel): https://<tunnel>/glasses/
 GLASSES_DIR = Path(__file__).resolve().parent.parent / "glasses"
@@ -68,7 +75,31 @@ _stats = {
     "bytes": 0,
     "last_frame_at": None,
     "last_audio_at": None,
+    "last_sound_at": None,   # last audio chunk that was NOT room tone (voice.is_silent)
 }
+
+# ---------- Display Audio Mode ----------
+# The Ray-Ban Display web app and the DAT camera stream cannot run at the same
+# time, and opening the web app disrupts the audio session. But the glasses mic
+# is a separate path from the camera (glasses mic -> phone app -> POST /capture
+# audio), so while the display is open Scene can still listen, just without new frames.
+# The lens itself is the only reliable signal the display is open: app.js
+# beacons POST /display/heartbeat on load and every 15 s, and /display/close
+# on pagehide. The mode expires 25 s after the last heartbeat, so a crashed
+# or closed web app falls back to normal capture on its own.
+_display_lock = threading.Lock()
+_display_last_seen = 0.0
+DISPLAY_HEARTBEAT_TTL_S = 25.0
+
+
+def display_audio_mode() -> bool:
+    with _display_lock:
+        return time.time() - _display_last_seen < DISPLAY_HEARTBEAT_TTL_S
+
+
+def _display_age_s() -> float | None:
+    with _display_lock:
+        return None if _display_last_seen == 0.0 else round(time.time() - _display_last_seen, 1)
 
 
 def _is_jpeg(b: bytes) -> bool:
@@ -118,6 +149,12 @@ async def capture(
             n = _stats["activation_photos" if activation else "frames"]
         print(f"{'ACTIVATION PHOTO' if activation else 'frame'} #{n} {len(data)} B -> {path.name}", flush=True)
         if not activation:
+            # Display Audio Mode: the display is open, so there should be no
+            # new frames anyway; if one sneaks in, save it but do not spend a
+            # Gemini vision call on it. Audio keeps flowing (see below).
+            # Sync the sticky memory flag from the TTL-based heartbeat every
+            # time, so an expired heartbeat resumes frame processing.
+            memory.set_display_audio_mode(display_audio_mode())
             memory.on_frame(path)
         return {"saved": path.name, "kind": "activation" if activation else "frame"}
 
@@ -130,7 +167,22 @@ async def capture(
         _stats["bytes"] += len(data)
         _stats["last_audio_at"] = now
         n = _stats["audio_chunks"]
+    # Real sound (not room tone) resets the mic-alive clock. The lens shows
+    # "Mic silent" when this goes stale in Display Audio Mode; silent WAVs
+    # still arrive when the mic is dead, so last_audio_at alone cannot tell.
+    try:
+        if not voice.is_silent(data):
+            with _lock:
+                _stats["last_sound_at"] = now
+    except Exception:
+        pass
     print(f"audio #{n} {len(data)} B -> {path.name}", flush=True)
+    # Keep the sticky Display Audio Mode flag fresh on every audio chunk too, not
+    # only on frames: while the display is open there are no frames to sync it, and
+    # a heartbeat that expired (display closed/crashed) must stop live transcript
+    # cards until the next heartbeat. set_display_audio_mode only prints when the
+    # value changes, so this stays quiet.
+    memory.set_display_audio_mode(display_audio_mode())
     memory.on_audio(path)
     return {"saved": path.name, "kind": "audio"}
 
@@ -144,22 +196,108 @@ async def activate():
     return {"activations": n}
 
 
+@app.post("/display/heartbeat")
+async def display_heartbeat():
+    """The glasses web app beacons this on load and every 15 s while open.
+    While the heartbeat is fresh, Scene is in Display Audio Mode: frames are
+    paused (no Gemini vision), but the glasses mic keeps listening."""
+    global _display_last_seen
+    with _display_lock:
+        _display_last_seen = time.time()
+    memory.set_display_audio_mode(True)
+    voice.note_display_seen()  # also feeds voice.display_open() for /settings + /stats
+    return {"display_audio_mode": True}
+
+
+@app.post("/display/close")
+async def display_close():
+    """Best effort (pagehide beacon); the heartbeat TTL is the real expiry."""
+    global _display_last_seen
+    with _display_lock:
+        _display_last_seen = 0.0
+    memory.set_display_audio_mode(False)
+    memory.clear_focus()  # display closed: "this" no longer means anything on it
+    voice.note_display_seen(now=0.0)  # reset the voice.py display heuristic
+    print("DISPLAY closed: frames resume", flush=True)
+    return {"display_audio_mode": False}
+
+
+@app.get("/display")
+async def display_state():
+    now = time.time()
+    with _lock:
+        last_sound = _stats["last_sound_at"]
+    return {
+        "display_audio_mode": display_audio_mode(),
+        "display_last_seen_age_s": _display_age_s(),
+        # Seconds since real (non-silent) audio arrived; None until any sound.
+        "audio_age_s": None if last_sound is None else round(now - last_sound, 1),
+    }
+
+
+@app.post("/focus")
+async def focus_set(request: Request):
+    """The glasses web app posts the item the wearer is looking at (a Follow-
+    Through promise, a Needs-you card, a task): that item becomes what "this"
+    means when they ask "Hey Scene, tell me more about this?". Re-posted on
+    every display heartbeat while it is still on screen, so the 5 min expiry
+    in memory.get_focus only bites once they look away / the display closes."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=422, detail="send a JSON focus item")
+    if not isinstance(body, dict) or not str(body.get("id") or "").strip() \
+            or not str(body.get("title") or "").strip():
+        raise HTTPException(status_code=422, detail="focus needs `id` and `title`")
+    return {"focus": memory.set_focus(body)}
+
+
+@app.get("/focus")
+async def focus_get():
+    return {"focus": memory.get_focus()}
+
+
+@app.post("/focus/clear")
+async def focus_clear():
+    memory.clear_focus()
+    return {"focus": None}
+
+
 def _frame_url(frame: str | None) -> str | None:
     return f"{PUBLIC_BASE_URL}/frames/{frame}" if frame and PUBLIC_BASE_URL else None
 
 
 @app.post("/ask")
 async def ask(text: str | None = Form(None), audio: UploadFile | None = File(None)):
+    _t0 = time.time()
+    _transcribe_ms = 0.0
     if audio is not None:
         data = await audio.read()
         if not _is_wav(data):
             _reject(f"audio is not WAV ({len(data)} B)")
         text = await run_in_threadpool(models.transcribe, data)
+        _transcribe_ms = (time.time() - _t0) * 1000
     if not text or not text.strip():
         raise HTTPException(status_code=422, detail="send `text` or `audio` with speech in it")
-    out = await run_in_threadpool(memory.ask, text.strip())  # blocking model calls off the event loop
-    print(f"ASK {out['question']!r} -> {out['answer']!r}", flush=True)
-    return {**{k: v for k, v in out.items() if k != "target"}, "image_url": _frame_url(out["frame"])}
+    text = text.strip()
+    # Action questions go to the agent first, never to memory.ask: /ask used to send
+    # "book a table..." / "email Priya..." straight to memory.ask, which could only
+    # answer "I don't have a memory of that." dining_turn is the same router the voice
+    # path uses (corrections, the code-first schedule draft, agent waiting reply,
+    # agent.start), so /ask and voice stay in agreement. Pure recall falls through
+    # to memory.ask below. Lead target / frame handling is untouched for recall.
+    if await run_in_threadpool(memory.dining_turn, text, True):
+        print(f"ASK {text!r} -> agent (routed_to=agent) transcribe_ms={_transcribe_ms:.0f}", flush=True)
+        return {"question": text,
+                "answer": "On it. Check your glasses for the next step.",
+                "memory_id": None, "frame": None, "target": None,
+                "routed_to": "agent", "agent": memory.agent.state(), "image_url": None}
+    out = await run_in_threadpool(memory.ask, text)  # blocking model calls off the event loop
+    print(f"ASK {out['question']!r} -> {out['answer']!r} transcribe_ms={_transcribe_ms:.0f} answer_ms={(time.time() - _t0) * 1000 - _transcribe_ms:.0f}", flush=True)
+    # The phone decodes target {name, place, frame, age_min} for Lead me there; frame_path is a
+    # laptop filesystem path and must never leave the server.
+    target = {k: v for k, v in (out.get("target") or {}).items() if k != "frame_path"}
+    return {**out, "target": target or None, "image_url": _frame_url(out["frame"])}
 
 
 @app.get("/tasks")
@@ -172,6 +310,102 @@ async def task_done(task_id: int):
     if not memory.set_done(task_id):
         raise HTTPException(status_code=404, detail="no such task")
     return {"done": task_id}
+
+
+# ---------- Face enrollment + live recognition (Gemini Hydrogen vision) ----------
+# POST /faces/enroll stores one JPEG per name in data/faces/<name>.jpg.
+# memory.match_face() compares frames against those photos via Gemini Hydrogen
+# vision (confidence >= 0.7); a matched name becomes the speaker on cards in
+# that window, otherwise speaker comes from `from_whom` in the transcript.
+@app.post("/faces/enroll", status_code=201)
+async def face_enroll(name: str | None = Form(None), photo: UploadFile | None = File(None)):
+    if not name or not name.strip():
+        raise HTTPException(status_code=422, detail="send `name`")
+    if photo is None:
+        raise HTTPException(status_code=422, detail="send a `photo` JPEG")
+    data = await photo.read()
+    if not _is_jpeg(data):
+        _reject(f"photo is not JPEG ({len(data)} B)")
+    try:
+        out = await run_in_threadpool(memory.enroll_face, name.strip(), data)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    base = PUBLIC_BASE_URL or ""
+    return {**out, "image_url": f"{base}/faces/{out['photo']}"}
+
+
+@app.get("/faces")
+async def faces_list():
+    base = PUBLIC_BASE_URL or ""
+    return {"recognition": "hydrogen_vision",
+            "note": "Face matching runs via Gemini Hydrogen vision on frames (confidence >= 0.7). A matched name becomes the speaker on cards in that window; otherwise speaker comes from from_whom in the transcript, or Unknown.",
+            "faces": [{**f, "image_url": f"{base}/faces/{f['photo']}"} for f in memory.list_faces()]}
+
+
+# ---------- Conversation Mode (see memory.py) ----------
+# The display/phone reads the state and can start/stop it. While active Scene only
+# listens, transcribes and takes notes: no spoken answers, no chime-out, no
+# interrupting speech. Live tasks created in this mode are drafts (GET /tasks,
+# /inbox): nothing sends without a tap.
+@app.get("/conversation")
+async def conversation_get():
+    """Conversation Mode state: mode, started_at, last_speech_at, speaker."""
+    return memory.conversation_state()
+
+
+@app.post("/conversation/start")
+async def conversation_start(request: Request):
+    """Start Conversation Mode from the display/phone. Optional JSON/form {speaker}."""
+    f = await _fields(request)
+    speaker = str(f.get("speaker") or "").strip() or None
+    started = memory.start_conversation(source="api", speaker=speaker)
+    return {**memory.conversation_state(), "started": started}
+
+
+@app.post("/conversation/stop")
+async def conversation_stop():
+    """Stop Conversation Mode from the display/phone."""
+    stopped = memory.stop_conversation(reason="api")
+    return {**memory.conversation_state(), "stopped": stopped}
+
+
+# ---------- Unknown face: enroll AFTER the conversation (see memory.py) ----------
+# GET /unknown-face: is a who-was-that prompt waiting, and which saved frame is it for.
+# POST /unknown-face/enroll {name}: enroll the saved frame under that name (the only
+# enroll path for an unknown face; no name, no enroll). POST /unknown-face/dismiss:
+# discard the saved frame, never ask again for that conversation. The phone never
+# uploads a photo: the frame already lives in data/frames on the laptop.
+@app.get("/unknown-face")
+async def unknown_face_get():
+    """Who-was-that prompt state: {pending, frame, frame_url, asked_at}."""
+    state = memory.unknown_face_state()
+    if state.get("frame"):
+        state = {**state, "frame_url": _frame_url(state["frame"])}
+    return state
+
+
+@app.post("/unknown-face/enroll")
+async def unknown_face_enroll(request: Request):
+    """Enroll the saved unknown frame under `name` (form or JSON). 422 with no name /
+    bad name, 404 with no prompt waiting."""
+    f = await _fields(request)
+    name = str(f.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="send `name`")
+    try:
+        out = await run_in_threadpool(memory.enroll_unknown_face, name)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    base = PUBLIC_BASE_URL or ""
+    return {**out, "image_url": f"{base}/faces/{out['photo']}"}
+
+
+@app.post("/unknown-face/dismiss")
+async def unknown_face_dismiss():
+    """Discard the saved unknown frame without enrolling. Never asks again for that conversation."""
+    return await run_in_threadpool(memory.dismiss_unknown_face)
 
 
 @app.get("/payments")
@@ -222,6 +456,112 @@ async def offer_decline(offer_id: int):
         raise HTTPException(status_code=409, detail="that offer is not waiting for an answer")
 
 
+# ---------- Lead me there (lead.py + memory.py) ----------
+# The glasses pinch Yes/No and Stop, and the phone's "Lead me there" button, call these.
+# The voice flow is untouched: spoken yes/no inside the offer window still goes through
+# memory._lead_audio -> lead.try_answer, and lead steps still push cards and speak.
+
+def _lead_target_public(t: dict | None) -> dict | None:
+    """Target safe to send to a client: name/place/frame/age, never the laptop file path."""
+    if not t:
+        return None
+    return {"name": t.get("name"), "place": t.get("place"), "frame": t.get("frame"),
+            "age_min": t.get("age_min")}
+
+
+def _lead_target_from_row(r: dict) -> dict:
+    now = time.time()
+    return {"name": r["text"], "place": r.get("place") or "",
+            "frame": r.get("frame"),
+            "frame_path": str(DATA_DIR / "frames" / r["frame"]) if r.get("frame") else None,
+            "age_min": round((now - r["ts"]) / 60)}
+
+
+@app.post("/lead/answer")
+async def lead_answer(request: Request):
+    """Glasses pinch Yes/No (or phone Yes) on a lead offer. Form or JSON {text: yes|no}.
+    200 on start/declined, 409 when no offer is waiting (expired or never asked)."""
+    f = await _fields(request)
+    text = str(f.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="text is required (yes or no)")
+    ans = parse_yes_no(text)
+    if ans == "unclear":
+        raise HTTPException(status_code=422, detail="answer yes or no")
+    r = lead.try_answer(ans, from_tap=True)
+    if r == "start":
+        return {"result": "started", "target": _lead_target_public(lead.get_target())}
+    if r == "declined":
+        return {"result": "declined"}
+    if r == "ignore":
+        return {"result": "ignored", "detail": "Scene is still asking; try again in a moment"}
+    raise HTTPException(status_code=409, detail="no lead offer is waiting (it expired or was never asked)")
+
+
+@app.post("/lead/stop")
+async def lead_stop():
+    """Glasses/phone Stop button while leading (or while an offer is open). Always 200."""
+    was = lead.mode()
+    lead.stop()
+    return {"stopped": True, "was": was}
+
+
+@app.post("/lead/start")
+async def lead_start(request: Request):
+    """Start the lead flow for a thing the glasses already saw: create the offer, which the
+    wearer then answers with POST /lead/answer (or out loud). Form or JSON, one of:
+      memory_id (an object row id from /items), name (+ optional place/frame/age_min),
+      question (e.g. "Where are my keys?" - answered via memory.ask).
+    409 when there is no photo to lead from, the sighting is older than 180 min, or a lead
+    is already running. Never invents a place: everything comes from a stored sighting."""
+    f = await _fields(request)
+    if lead.mode() == "active":
+        raise HTTPException(status_code=409, detail="a lead is already running, stop it first")
+    target = None
+    if f.get("memory_id") is not None:
+        try:
+            mid = int(f["memory_id"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="memory_id must be an object id")
+        rows_ = memory.rows("SELECT * FROM memories WHERE id=? AND kind='object'", mid)
+        if not rows_:
+            raise HTTPException(status_code=404, detail="no such object memory")
+        target = _lead_target_from_row(rows_[0])
+    elif f.get("question") or f.get("text"):
+        out = await run_in_threadpool(memory.ask, str(f.get("question") or f.get("text")).strip())
+        target = out.get("target")
+        if not target:
+            raise HTTPException(status_code=409, detail="no recent sighting with a photo to lead from")
+    elif f.get("name"):
+        name = str(f["name"]).strip().lower()
+        rows_ = memory.rows("SELECT * FROM memories WHERE kind='object' AND text=? ORDER BY ts DESC LIMIT 1", name)
+        if rows_:
+            target = _lead_target_from_row(rows_[0])
+        else:
+            if not f.get("frame"):
+                raise HTTPException(status_code=404, detail=f"never saw {name}")
+            try:
+                age_min = int(f["age_min"])
+            except (KeyError, TypeError, ValueError):
+                raise HTTPException(status_code=422, detail="age_min is required when no stored sighting exists")
+            target = {"name": name, "place": str(f.get("place") or ""),
+                      "frame": str(f["frame"]),
+                      "frame_path": str(DATA_DIR / "frames" / str(f["frame"])),
+                      "age_min": age_min}
+    else:
+        raise HTTPException(status_code=422, detail="send memory_id, name, or question")
+    if not target.get("frame") or not (DATA_DIR / "frames" / str(target["frame"])).is_file():
+        raise HTTPException(status_code=409, detail="no photo to lead from")
+    if target.get("age_min", 9999) > memory.LEAD_MAX_AGE_MIN:
+        raise HTTPException(status_code=409,
+                            detail=f"too long ago to lead from ({target['age_min']} min ago), it may have moved")
+    spoken = (f"{target['name']} is {target['place']}. Want me to lead you there?".strip()
+              if target.get("place") else f"Want me to lead you to {target['name']}?")
+    lead.offer(target, spoken)
+    return {"offer": "created", "mode": "offer", "target": _lead_target_public(target),
+            "expires_in_s": round(len(spoken.split()) / 2.6 + 1.5 + 15)}
+
+
 @app.post("/notes/stop")
 async def notes_stop():
     nid = await run_in_threadpool(memory.finish_notes)  # one model call, off the event loop
@@ -230,10 +570,25 @@ async def notes_stop():
     return {"notes": nid}
 
 
+@app.post("/session/stop")
+async def session_stop():
+    """The wearer stopped streaming: save everything heard so far, synchronously
+    (end the conversation, flush the transcript tail, finish any notes session).
+    The phone should call this when Stop is tapped. Even if it never does, the
+    flush watchdog + startup recovery cover the same tail -- this just makes it
+    immediate instead of ~10 s later."""
+    return await run_in_threadpool(memory.stop_streaming)
+
+
 @app.get("/session")
 async def session():
     """Is a note session running (for the glasses' "Taking notes" card)."""
-    return {"notes": notes.status()}
+    # Polled every 2 s by the phone, so this also keeps the sticky memory flag
+    # in sync with the heartbeat TTL when no frames are arriving at all.
+    memory.set_display_audio_mode(display_audio_mode())
+    return {"notes": notes.status(), "display_audio_mode": display_audio_mode(),
+            "display_last_seen_age_s": _display_age_s(),
+            "conversation": memory.conversation_state()}
 
 
 @app.get("/notes")
@@ -326,6 +681,40 @@ async def event_dismiss(draft_id: int):
         return outbox.dismiss(draft_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="no such event")
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/reservations/{draft_id}/confirm")
+async def reservation_confirm(draft_id: int):
+    """The glasses'/phone's Confirm button on a reservation draft: confirms the DRAFT only.
+    No table is booked: there is no restaurant booking API."""
+    try:
+        d = outbox.get(draft_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="no such reservation draft")
+    if d.get("kind") != "reservation":
+        raise HTTPException(status_code=409, detail="that draft is not a reservation")
+    try:
+        d = await run_in_threadpool(outbox.send, draft_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    memory.push_card("reservation", "Reservation draft confirmed",
+                     f"Draft for {d['restaurant']} at {d['start'].replace('T', ' ')} confirmed. "
+                     "No table was booked: call the restaurant to book.", ref=draft_id)
+    return d
+
+
+@app.post("/reservations/{draft_id}/dismiss")
+async def reservation_dismiss(draft_id: int):
+    try:
+        d = outbox.get(draft_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="no such reservation draft")
+    if d.get("kind") != "reservation":
+        raise HTTPException(status_code=409, detail="that draft is not a reservation")
+    try:
+        return outbox.dismiss(draft_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -489,8 +878,8 @@ async def log_visitors(request: Request, call_next):
     if path.startswith("/glasses"):
         # The glasses' WebView otherwise keeps an old app.js after an update.
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
-    if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log",
-                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/location", "/agent", "/orders", "/order", "/inbox", "/activity", "/session", "/contacts", "/slack", "/dev")):
+    if not path.startswith(("/capture", "/feed", "/tasks", "/items", "/payments", "/today", "/stats", "/client-log", "/display", "/focus",
+                            "/frames", "/ft/", "/offers", "/notes", "/emails", "/events", "/location", "/agent", "/orders", "/order", "/inbox", "/activity", "/session", "/contacts", "/slack", "/dev", "/lead", "/faces", "/unknown-face", "/reservations", "/conversation", "/interrupt", "/chime")):
         with open(DATA_DIR / "glasses.log", "a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {request.method} {path} -> {response.status_code} "
                     f"ua={request.headers.get('user-agent', '?')[:160]}\n")
@@ -519,6 +908,16 @@ async def followthrough_proxy(path: str, request: Request):
     except httpx.HTTPError as e:
         raise HTTPException(502, f"Follow-Through isn't reachable at {FOLLOWTHROUGH_URL} ({type(e).__name__}). "
                                  "Start it: cd src/followthrough && ./run.sh")
+    if request.method == "POST" and 200 <= r.status_code < 300:
+        # A tap handled this promise (approve / dismiss / retry, from phone or glasses):
+        # stop the voice loop asking about it, or a later "no" / "skip" would dismiss an
+        # already-approved item and show "Skipped". Never breaks the proxy if it fails.
+        parts = path.split("/")
+        if len(parts) == 4 and parts[0] == "api" and parts[1] == "items" and parts[3] in ("approve", "dismiss", "retry"):
+            try:
+                memory.ft_cancel(parts[2])
+            except Exception as e:
+                print(f"server: ft_cancel failed: {e!r}", flush=True)
     return Response(r.content, status_code=r.status_code, media_type=r.headers.get("content-type"))
 
 
@@ -554,12 +953,36 @@ async def speech_audio(utterance_id: int):
     return Response(data, media_type=media_type)
 
 
+@app.get("/interrupt")
+async def interrupt_state():
+    """Barge-in sequence number: the phone polls this every 0.5 s and stops its
+    own player when the number changes (the backend already cleared its queue
+    and killed the laptop player when the wearer talked over Jessica)."""
+    return {"interrupt_id": voice.interrupt_seq()}
+
+
+@app.post("/chime/local")
+async def chime_local():
+    """The phone played the fast local chime on speech onset (~100-250 ms in,
+    before any transcription). Tell voice.py so its chime-echo filter drops
+    the tone the mic picks up, and chime() skips queuing a second ping for
+    the same wake word. Fire-and-forget from the phone; never blocks audio."""
+    voice.note_local_chime()
+    return {"ok": True}
+
+
 @app.get("/settings")
 async def settings_get():
     """`output` is null until the wearer picks, so the glasses app knows to ask."""
+    now = time.time()
+    with _lock:
+        last_sound = _stats["last_sound_at"]
     return {"output": voice.output_mode(default=None), "modes": list(voice.OUTPUT_MODES),
             "speak_on": voice.speak_on(), "speak_targets": list(voice.SPEAK_TARGETS),
-            "paused": voice.paused()}
+            "paused": voice.paused(), "display_audio_mode": display_audio_mode(),
+            "audio_age_s": None if last_sound is None else round(now - last_sound, 1),
+            "display_open": voice.display_open(), "display_seen_ago_s": voice.display_seen_ago_s(),
+            "conversation": memory.conversation_state()}
 
 
 @app.post("/settings")
@@ -596,6 +1019,8 @@ async def stats():
         s = dict(_stats)
     for k in ("last_frame_at", "last_audio_at"):
         s[k.replace("_at", "_age_s")] = None if s[k] is None else round(now - s[k], 1)
+    s["display_open"] = voice.display_open()
+    s["display_seen_ago_s"] = voice.display_seen_ago_s()
     s["uptime_s"] = round(now - _started, 1)
     s["data_dir"] = str(DATA_DIR)
     return s
@@ -625,5 +1050,9 @@ if __name__ == "__main__":
     import uvicorn
 
     _check_models()
+    # Restart recovery: flush anything the previous run was killed with still
+    # unflushed (transcript tail, a whole conversation, a notes session, failed
+    # Follow-Through forwards) so a backend restart never clears what was heard.
+    memory.recover_pending()
 
     uvicorn.run(app, host="0.0.0.0", port=PORT)

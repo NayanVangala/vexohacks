@@ -3,11 +3,56 @@ one frame per slide, then build notes. Nothing is kept without verbatim evidence
 or on a saved slide (same rule as memory.quoted). Pure logic apart from the one model call in build().
 """
 
+import json
 import re
 from datetime import datetime
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import models
+
+# The session used to live only in RAM (_session): restart the backend before
+# /notes/stop and the whole meeting's lines and slides were gone. It is now
+# written to data/notes-session.json on every line/slide, reloaded by
+# recover() on startup, and deleted only when the notes are built.
+_data_dir: Path | None = None
+
+
+def set_data_dir(p) -> None:
+    global _data_dir
+    _data_dir = Path(p)
+
+
+def _session_path() -> Path:
+    base = _data_dir if _data_dir is not None else Path(__file__).parent / "data"
+    return base / "notes-session.json"
+
+
+def _save_session() -> None:
+    if _session is None:
+        return
+    try:
+        p = _session_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"started": _session.started, "last_seen": _session.last_seen,
+                                 "lines": _session.lines, "slides": _session.slides}))
+    except OSError:
+        pass  # a failed save must never break note-taking; the RAM copy still works
+
+
+def recover() -> bool:
+    """Reload a session the backend was killed with still in progress."""
+    global _session
+    p = _session_path()
+    if not p.is_file():
+        return False
+    try:
+        d = json.loads(p.read_text())
+        _session = Session(started=float(d["started"]), last_seen=float(d["last_seen"]),
+                           lines=list(d.get("lines", [])), slides=list(d.get("slides", [])))
+    except (ValueError, KeyError, TypeError, OSError):
+        return False
+    return True
 
 IDLE_STOP_S = 600.0       # no meeting or slides on screen for this long: the meeting is over
 SAME_SLIDE = 0.8          # word overlap at or above this counts as the same slide
@@ -44,6 +89,7 @@ def slide_changed(prev: str, new: str) -> bool:
 def start(now: float) -> None:
     global _session
     _session = Session(started=now, last_seen=now)
+    _save_session()
 
 
 def active() -> bool:
@@ -60,6 +106,7 @@ def status() -> dict:
 def add_line(text: str) -> None:
     if _session is not None and text:
         _session.lines.append(text)
+        _save_session()
 
 
 def on_scene(scene, frame: str | None, now: float) -> bool:
@@ -76,12 +123,17 @@ def on_scene(scene, frame: str | None, now: float) -> bool:
         last = s.slides[-1]["text"] if s.slides else ""
         if slide_changed(last, text):
             s.slides.append({"frame": frame, "text": text})
+    _save_session()
     return now - s.last_seen > IDLE_STOP_S
 
 
 def stop() -> Session | None:
     global _session
     s, _session = _session, None
+    try:
+        _session_path().unlink(missing_ok=True)  # built now: the durable copy can go
+    except OSError:
+        pass
     return s
 
 

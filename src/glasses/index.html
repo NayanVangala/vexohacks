@@ -7,6 +7,8 @@
   alone, including asking questions, so Scene still works when voice doesn't.
   Add once in Meta AI > Devices > Display Glasses settings > App connections > Web apps,
   URL = https://<your tunnel>/glasses/
+  Home is a stacked bubble list (newest at the bottom, max 4 visible); a small Scene logo
+  + Live dot stays in the header on every screen, and full detail lives on the phone.
 -->
 <html lang="en">
 <head>
@@ -24,7 +26,7 @@
 <!-- Plain HTML first: if the script can't run, this still shows, so the screen is never blank. -->
 <div id="app" aria-live="polite">
   <header><h1>Scene</h1></header>
-  <div class="card"><div class="title">Loading…</div><div class="body">Connecting to your laptop.</div></div>
+  <div class="calm-line">Connecting to your laptop…</div>
 </div>
 <script src="app.js"></script>
 <script src="scene-views.js"></script>

@@ -51,16 +51,18 @@ def stop() -> None:
         _state = None
 
 
-def try_answer(text: str, now: float | None = None) -> str | None:
+def try_answer(text: str, now: float | None = None, from_tap: bool = False) -> str | None:
     """Handle one transcribed chunk while an offer is open. Returns what to do:
-    "start" (yes), "declined" (no), "ignore" (our own voice, or ordinary talk: keep listening), None (no offer)."""
+    "start" (yes), "declined" (no), "ignore" (our own voice, or ordinary talk: keep listening), None (no offer).
+    from_tap=True is a deliberate human tap (glasses pinch / phone button): it is an answer, never
+    Scene's own voice, so the listen_from gate does not apply. The voice path never passes it."""
     global _state
     now = time.time() if now is None else now
     with _lock:
         s = _state
         if not s or s["mode"] != "offer":
             return None
-        if now < s["listen_from"]:
+        if now < s["listen_from"] and not from_tap:
             return "ignore"                    # Scene's own question reaching the mic: never an answer
         if now > s["until"]:
             _state = None

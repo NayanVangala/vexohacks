@@ -311,3 +311,28 @@ def test_slack_refuses_unknown_people_channels_and_raw_ids_and_empty_messages():
     r.agent.start("slack zed")
     assert not getattr(r, "slacks", []) and "no slack contact" in str(r.steps[1]).lower()
     assert "message is required" in str(r.steps[-1]).lower() and r.agent.state()["status"] == "waiting"
+
+
+# ---- ordering: nearest place is picked, never confirmed ----
+
+def test_find_nearby_picks_nearest_without_a_confirmation_question():
+    """Two McDonald's, no ask_user at all: find -> menu (nearest, index 0 by default)
+    -> propose. The order card says which street was picked and the 8pm time."""
+    r = Rig([call("find_nearby", query="McDonald's"),
+             call("get_menu"),
+             call("propose_order", items=[{"name": "Big Mac", "qty": 1}])])
+    r.agent.start("order a big mac from mcdonalds at 8pm")
+    assert r.agent.state()["status"] == "done"
+    assert not any(p[0] == "confirm" for p in r.pushed)  # no "Order from 441 Sutter St?" question
+    place, lines = r.proposed[0]
+    assert place["address"] == "441 Sutter St" and lines == [{"name": "Big Mac", "price_cents": 899, "qty": 1}]
+    kind, title, body, ref = r.pushed[-1]
+    assert kind == "order" and "441 Sutter St" in body and "0.1 mi, closest" in body
+    assert "for 8:00 PM" in body and "$8.99" in body
+
+
+def test_order_time_label():
+    assert agent_mod._order_time_label("order a big mac from mcdonalds at 8pm") == "8:00 PM"
+    assert agent_mod._order_time_label("order a big mac from mcdonalds at 8am") == "8:00 AM"
+    assert agent_mod._order_time_label("order 2 big macs") is None  # a quantity is not a time
+    assert agent_mod._order_time_label("order a big mac at 7, no actually 8pm") == "8:00 PM"

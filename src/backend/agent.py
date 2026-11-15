@@ -1,10 +1,11 @@
 """Scene's task agent: "hey Scene, place an order at McDonald's", "email Priya about the budget", "put this on my
 calendar", "search up the best GoPros" all run one real tool-using loop.
 
-It finds the nearest place, asks the wearer to confirm it, looks up that place's menu, builds the cart from what
-the wearer says, asks again, and only then proposes an order (a card with Pay). It can never charge anything: Pay
-on the glasses is the only thing that starts Stripe. Order lines must come from the menu fetched in this session;
-the total is computed in code by orders.propose.
+It finds the nearest place and picks it itself (never asks the wearer to confirm which location: when several
+places share a city, the nearest one is the answer, and the card says which street it picked), looks up that
+place's menu, builds the cart from what the wearer says, and only then proposes an order (a card with Pay).
+It can never charge anything: Pay on the glasses is the only thing that starts Stripe. Order lines must come
+from the menu fetched in this session; the total is computed in code by orders.propose.
 
 The model call is injectable (`step`), so tests script it. Slow lookups run while the wearer is being asked.
 """
@@ -21,6 +22,7 @@ import lookup
 import models
 import outbox
 import slack
+import voice
 # orders and payments import memory, which imports this module: they are imported inside the functions that use them.
 
 TOOL_BUDGET = 8            # tool calls per user turn before the agent gives up
@@ -31,10 +33,11 @@ def _system() -> str:
     now = datetime.now(ZoneInfo(os.environ.get("TIMEZONE", "America/Los_Angeles")))
     return f"""You are Scene, a voice assistant on someone's smart glasses. It is {now.strftime('%A %Y-%m-%d %H:%M')} local time.
 You help with errands using tools: ordering food, emailing, the calendar, and searching the web. Rules:
-- Ordering: find_nearby for the restaurant, then ask_user to confirm the nearest place (say its street and distance). If they say no, offer the next one. After they confirm, get_menu, then ask_user what they would like (skip if they already said). Only order items get_menu returned; never invent items or prices. propose_order creates a card they approve; you cannot pay.
+- Ordering: find_nearby for the restaurant, then pick the NEAREST place yourself (place_index 0, already sorted nearest first). Never ask the wearer to confirm which location: if several places share a city, the nearest one is the answer. Say its street and distance in one short line so they know which one you picked, then get_menu, then ask_user what they would like only if they did not already say an item. Only order items get_menu returned; never invent items or prices. propose_order creates a card they approve; you cannot pay. If the wearer named a time ("at 8pm"), that time goes on the order card; it does not need a question.
 - Email and contacts: lookup_contact checks the saved contacts. send_email takes the person's NAME only (never an email address); the app looks up their address. send_scheduling_link emails someone the wearer's scheduling link so they can pick a time ("find a time to meet with Maya"). send_email drafts it; the wearer taps Send. Write the subject and a 2 to 4 sentence body from them to the person. If you do not know what it should say, ask_user first. Never claim an email was sent: you only drafted it.
 - Slack: send_slack drafts a Slack message; the wearer taps Send. `to` is a person's NAME (they must have a Slack id saved) or a #channel from the allowed list. Never put an id or address in `to`. Write the message in the wearer's voice, one or two sentences.
-- Calendar: add_calendar_event needs a real day and time (start as YYYY-MM-DDTHH:MM local). If the day or time is missing or vague, ask_user first. Resolve "friday" or "tomorrow" from the date above. It makes a card the wearer approves.
+- Calendar: add_calendar_event needs a real day and time (start as YYYY-MM-DDTHH:MM local). If the day or time is missing or vague, ask_user first. Resolve "friday" or "tomorrow" from the date above. It makes a card the wearer approves. If the wearer corrects a time in the same sentence ("7, no actually 8"), use the corrected time (8) and ignore the earlier one. Complete "schedule <thing> at <time>" requests are drafted in code before you see them; you only see ones missing a time or day, so ask_user for that.
+- Reservations: propose_reservation only drafts a request card the wearer confirms; it never books a table, so never claim a table was booked. It needs a restaurant name and a real day and time (start as YYYY-MM-DDTHH:MM local). If either is missing or vague, ask_user first. If the wearer corrects a time in the same sentence ("7, no actually 8"), use the corrected time (8) and ignore the earlier one.
 - Search: web_search for facts, products, news. Then answer in one or two spoken sentences; details are already on their screen.
 - "What is high protein" or "healthy options": get_menu then rank_menu, answer in one sentence.
 - If find_nearby says there is no location, ask_user where they are, then call it again with near set to their answer.
@@ -68,6 +71,10 @@ TOOLS = [
     {"name": "add_calendar_event", "description": "Draft a calendar event for the wearer to approve.",
      "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "start": {"type": "string", "description": "YYYY-MM-DDTHH:MM, local time"},
                                                      "duration_min": {"type": "integer"}}, "required": ["title", "start"]}},
+    {"name": "propose_reservation", "description": "Draft a restaurant reservation REQUEST for the wearer to confirm. It does not book a table: there is no booking API.",
+     "parameters": {"type": "object", "properties": {"restaurant": {"type": "string", "description": "Restaurant name, as the wearer said it"},
+                                                     "start": {"type": "string", "description": "YYYY-MM-DDTHH:MM, local time"},
+                                                     "party_size": {"type": "integer", "description": "How many people, if the wearer said"}}, "required": ["restaurant", "start"]}},
     {"name": "web_search", "description": "Search the web and get a short, sourced answer.",
      "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "rank_menu", "description": "Best items on the fetched menu for a goal.",
@@ -75,8 +82,15 @@ TOOLS = [
 ]
 
 
+def _tok_norm(tok: str) -> str:
+    """Plural-tolerant token: "Macs" matches the menu's "Mac", "nuggets" matches
+    "nugget". Applied to both sides of a match, so it can only conflate items
+    that differ by a trailing s alone."""
+    return tok[:-1] if len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss") else tok
+
+
 def _toks(s: str) -> list[str]:
-    return re.sub(r"[^a-z0-9 ]+", " ", s.lower()).split()
+    return [_tok_norm(t) for t in re.sub(r"[^a-z0-9 ]+", " ", s.lower()).split()]
 
 
 def _match(name: str, menu: list[dict]) -> dict | None:
@@ -93,10 +107,37 @@ def _usd(c: int) -> str:
     return f"${c / 100:.2f}"
 
 
+_ORDER_TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\bat\s+(\d{1,2})(?::(\d{2}))?\b(?!\s*(?:am|pm)\b)", re.I)  # bare "at 8" must not steal the "8" of "at 8pm"
+
+
+def _order_time_label(utterance: str) -> str | None:
+    """"8:00 PM" from "order a Big Mac ... at 8pm", else None. A bare hour only counts
+    after "at" (so "2 Big Macs" is a quantity, not a time); an am/pm always counts."""
+    best = None
+    for m in _ORDER_TIME_RE.finditer(utterance or ""):
+        if m.group(1) is not None:
+            h, minute, ampm = int(m.group(1)), int(m.group(2) or 0), m.group(3).lower()
+        else:
+            h, minute, ampm = int(m.group(4)), int(m.group(5) or 0), None
+        if not 1 <= h <= 12 or minute > 59:
+            continue
+        if ampm:
+            h24 = h % 12 + (12 if ampm == "pm" else 0)
+        elif h < 12:
+            h24 = h + 12  # a bare dinner hour is PM, same rule as the reservation correction
+        else:
+            h24 = h
+        best = (m.start(), h24, minute)
+    if best is None:
+        return None
+    now = datetime.now(ZoneInfo(os.environ.get("TIMEZONE", "America/Los_Angeles")))
+    return now.replace(hour=best[1], minute=best[2], second=0, microsecond=0).strftime("%-I:%M %p")
+
+
 class Agent:
     def __init__(self, step=None, say=None, push=None, where=None, sync=False, find=None, menu=None, propose=None,
                  draft_email=None, draft_event=None, search=None, find_contact=None,
-                 draft_slack=None, slack_target=None):
+                 draft_slack=None, slack_target=None, draft_reservation=None):
         self.step = step or models.agent_step
         self.say = say or (lambda text: None)
         self.push = push or (lambda kind, title, body, ref: None)
@@ -110,6 +151,7 @@ class Agent:
         self.search = search or models.search_web
         self.find_contact = find_contact or contacts.find
         self.draft_slack = draft_slack or outbox.draft_slack
+        self.draft_reservation = draft_reservation or outbox.draft_reservation
         self.slack_target = slack_target or slack.target
         self._lock = threading.Lock()
         self._reset()
@@ -210,10 +252,19 @@ class Agent:
         self.places = self.find(a["query"], where)
         if not self.places:
             return {"error": "no places found; ask the user to name the place or area"}
-        return {"places": [{"index": i, **p} for i, p in enumerate(self.places)]}
+        # Nearest first, and already picked: when several places share a city, the
+        # nearest one is the answer and the wearer is never asked to confirm which
+        # location. place_index 0 is that place; the card says which street it is.
+        self.places.sort(key=lambda p: (p.get("distance_mi") is None, p.get("distance_mi") or 0))
+        self.place = self.places[0]
+        return {"places": [{"index": i, **p} for i, p in enumerate(self.places)],
+                "picked": {"index": 0, **self.places[0]},
+                "note": "place_index 0 is already picked (nearest). Do not ask the user to confirm it; say its street and distance, then call get_menu."}
 
     def _t_get_menu(self, a: dict) -> dict:
         i = a.get("place_index")
+        if i is None:
+            i = 0  # nearest place is already picked by find_nearby; no confirm step
         if not isinstance(i, int) or not 0 <= i < len(self.places):
             return {"error": "place_index is not one of the found places"}
         self.place = self.places[i]
@@ -305,8 +356,34 @@ class Agent:
         d = self.draft_event(title, start, mins if isinstance(mins, int) and mins > 0 else 30, self.utterance)
         self.push("calendar", "Add to calendar?", f"{title} · {when.strftime('%a %b %-d, %-I:%M %p')}", d["id"])
         self.say("Got it. Pinch Add on your glasses to put it on your calendar.")
+        voice.chime_out()   # the draft is made and the answer is done: the done ping
         self.status = "done"
         return {"ok": True}
+
+    def _t_propose_reservation(self, a: dict) -> dict:
+        """Draft a reservation request card. Never a booking: no restaurant booking API exists,
+        and the card and the spoken line both say so."""
+        restaurant = str(a.get("restaurant") or "").strip()
+        start = str(a.get("start") or "").strip()
+        if not restaurant:
+            return {"error": "restaurant is required: ask the user which restaurant"}
+        try:
+            when = datetime.strptime(start, "%Y-%m-%dT%H:%M")
+        except ValueError:
+            return {"error": "start must be YYYY-MM-DDTHH:MM in local time with a real day and time: ask the user if unsure"}
+        now = datetime.now(ZoneInfo(os.environ.get("TIMEZONE", "America/Los_Angeles"))).replace(tzinfo=None)
+        if when < now.replace(microsecond=0) - timedelta(minutes=5):
+            return {"error": "that time is in the past: ask the user for a future day and time"}
+        size = a.get("party_size")
+        party = size if isinstance(size, int) and size > 0 else None
+        d = self.draft_reservation(restaurant, start, party, self.utterance)
+        when_s = when.strftime("%a %b %-d, %-I:%M %p")
+        party_s = f"party of {party}" if party else "party size not given"
+        self.push("reservation", f"Reservation at {restaurant}?",
+                  f"Draft reservation · {when_s} · {party_s} — tap Confirm, no table booked yet.", d["id"])
+        self.say("Drafted it. Pinch Confirm on your glasses when you're ready. I haven't booked a table.")
+        self.status = "done"
+        return {"ok": True, "draft_id": d["id"]}
 
     def _t_web_search(self, a: dict) -> dict:
         q = str(a.get("query") or "").strip()
@@ -321,6 +398,8 @@ class Agent:
         return {"answer": r["answer"], "sources": names}
 
     def _t_propose_order(self, a: dict) -> dict:
+        if not self.place and self.places:
+            self.place = self.places[0]  # nearest place is already picked; never ask which
         if not self.place or not self.items:
             return {"error": "get_menu for the chosen place first"}
         lines = []
@@ -335,7 +414,14 @@ class Agent:
         if not lines:
             return {"error": "no items given"}
         order = self.propose(self.place, lines)  # raises PaymentError over the cap; _tool turns it into an error result
-        summary = ", ".join(f"{l['qty']}x {l['name']}" for l in lines) + f" · {_usd(order['total_cents'])}"
+        # The card says which location was picked (street + distance), and the time
+        # the wearer named, so a "Newark at 8pm" order never silently drops either.
+        dist = self.place.get("distance_mi")
+        dist_s = f", {dist} mi, closest" if dist is not None else ", closest"
+        when = _order_time_label(self.utterance)
+        when_s = f" · for {when}" if when else ""
+        summary = (", ".join(f"{l['qty']}x {l['name']}" for l in lines) + f" · {_usd(order['total_cents'])}{when_s}"
+                   f" · {self.place['name']}, {self.place['address']}{dist_s} — tap Approve to pay.")
         self.push("order", f"Order from {self.place['name']}?", summary, order["id"])
         self.say(f"Got it. {summary.replace(' · ', ', ')} total. Approve it on your glasses.")
         self.status = "done"

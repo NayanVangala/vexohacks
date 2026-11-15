@@ -43,6 +43,17 @@ def items() -> list[dict]:
             title, body = outbox.card_text(d)
             out.append({"type": "email", "id": d["id"], "title": title, "ts": d["ts"], "body": body,
                         "actions": [_act("Send", f"/emails/{d['id']}/send", primary=True), _act("Not now", f"/emails/{d['id']}/dismiss")]})
+        elif d["kind"] == "reservation":
+            # Draft only: confirming it confirms the draft, it does not book a table.
+            body = (f"Draft reservation · {d['start'].replace('T', ' ')} · "
+                    f"party of {d['party_size']}" if d.get("party_size") else "Draft reservation · " + d['start'].replace('T', ' '))
+            if d.get("changed_from"):
+                body += f" · changed from {d['changed_from'].replace('T', ' ')}"
+            body += " — no table booked yet."
+            out.append({"type": "reservation", "id": d["id"], "title": f"Reservation at {d['restaurant']}?", "ts": d["ts"],
+                        "body": body,
+                        "actions": [_act("Confirm", f"/reservations/{d['id']}/confirm", primary=True),
+                                    _act("Not now", f"/reservations/{d['id']}/dismiss")]})
         else:
             out.append({"type": "event", "id": d["id"], "title": "Add to calendar?", "ts": d["ts"],
                         "body": f"{d['title']} · {d['start'].replace('T', ' ')} ({d['duration_min']} min)",

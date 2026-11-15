@@ -54,6 +54,32 @@ final class GlassesAudioRecorder: @unchecked Sendable {
     /// Last port we logged, so a repeated selection stays quiet.
     private var lastLoggedPortUID: String?
 
+    /// No silent phone-mic fallback, on purpose (Nayan, 2026-11-14: everything
+    /// is recorded from the glasses, nothing from the phone). A silent glasses
+    /// mic stays silent and visible in the log; the only way onto the iPhone
+    /// mic is the manual Diagnostics toggle, which defaults OFF. An earlier
+    /// version of this file had a fallbackToPhoneMic flag the watchdog set
+    /// after dead restarts; it was removed because selectPreferredInput never
+    /// honoured it, so it only lied in the log.
+
+    /// Display Audio Mode: the glasses web app is open, so the DAT camera cannot
+    /// run and opening the web app disrupts phone audio. The glasses mic stays
+    /// the source in this mode too (audio is glasses-only, nothing from the
+    /// phone); the engine is restarted once on entry, because the tap can go
+    /// dead with all-zero buffers after the display opens.
+    var displayAudioMode = false
+
+    /// Restart the engine when the display opens; the mic watchdog
+    /// (BridgeController) keeps watching after. Glasses mic stays the source.
+    func restartForDisplayAudioMode() {
+        displayAudioMode = true
+        guard isRunning else { return }
+        BridgeState.log("display audio mode: restarting audio engine (glasses mic stays the source)")
+        restartForRouteChange()
+    }
+
+    func clearDisplayAudioMode() { displayAudioMode = false }
+
     init(onPCM: @escaping @Sendable (Data) -> Void) {
         self.onPCM = onPCM
     }
@@ -87,6 +113,15 @@ final class GlassesAudioRecorder: @unchecked Sendable {
             try await configureSession()
             let chosen = selectPreferredInput()
             if let chosen { await awaitRouteSettled(expecting: chosen) }
+            // Say the source out loud in the log every start, so a run on the
+            // phone mic can never hide: glasses mic (HFP) by default, iPhone
+            // mic only via the manual override, built-in mic only with no HFP.
+            if let chosen {
+                let source = chosen.portType == .builtInMic
+                    ? (Self.usePhoneMic ? "iPhone mic (manual override ON)" : "built-in mic (no HFP port)")
+                    : "glasses mic (HFP)"
+                BridgeState.log("audio source: \(source)")
+            }
             try installTapAndStart()
             installNotificationObservers()
             BridgeState.log("audio recorder started")
@@ -189,20 +224,37 @@ final class GlassesAudioRecorder: @unchecked Sendable {
 
     enum AudioSessionError: LocalizedError {
         case allTiersFailed
-        var errorDescription: String? { "no AVAudioSession configuration was accepted" }
+        case degenerateInputFormat
+        case targetFormatFailed
+        case converterFailed
+        var errorDescription: String? {
+            switch self {
+            case .allTiersFailed: return "no AVAudioSession configuration was accepted"
+            case .degenerateInputFormat: return "input format is degenerate (0 Hz / 0 ch)"
+            case .targetFormatFailed: return "could not build target audio format"
+            case .converterFailed: return "could not build AVAudioConverter from the live input format"
+            }
+        }
     }
 
     /// Step 2 — prefer a Bluetooth HFP port; fall back to the built-in mic and
     /// say so loudly.
     ///
-    /// TODO(glasses): §11.3 — whether the Ray-Ban Meta glasses expose their mic
-    /// as a `.bluetoothHFP` port to a 3P app *while a DAT camera session is
-    /// streaming* is the highest-risk unknown in this build. Dump this log line
-    /// before, during, and after starting the stream; that single line resolves it.
-    /// Measured 2026-11-14 on Ray-Ban Display: while the DAT camera stream runs, the glasses'
-    /// HFP mic delivers all-zero samples (the camera and HFP share one Bluetooth radio). So the
-    /// iPhone mic is the default; Diagnostics > "Use iPhone microphone" off tries the glasses mic.
-    static var usePhoneMic: Bool { UserDefaults.standard.object(forKey: "usePhoneMic") as? Bool ?? true }
+    /// Audio source is the glasses mic only, nothing from the phone (Nayan,
+    /// 2026-11-14: "everything is being recorded from my glasses"). The HFP
+    /// port is always preferred when present; the built-in mic is used ONLY
+    /// when no HFP port exists at all (mock mode, no glasses connected) -- never
+    /// as a silent substitute for a dead glasses mic. A dead glasses mic must
+    /// surface as silence (VAD drops the all-zero chunks and the log says so),
+    /// not as phone audio pretending to be glasses audio.
+    /// Known risk, measured 2026-11-14 on Ray-Ban Display: while the DAT camera
+    /// stream runs, the glasses' HFP mic delivered all-zero samples (camera and
+    /// HFP share one Bluetooth radio). If that still holds, the VAD gate drops
+    /// those chunks and the "glasses mic silent" log line proves it live; the
+    /// fix then is at the capture layer, not a quiet phone-mic fallback.
+    /// Diagnostics > "Use iPhone microphone" is kept as a manual override for
+    /// that case only, and defaults OFF.
+    static var usePhoneMic: Bool { UserDefaults.standard.object(forKey: "usePhoneMic") as? Bool ?? false }
 
     @discardableResult
     private func selectPreferredInput() -> AVAudioSessionPortDescription? {
@@ -211,6 +263,11 @@ final class GlassesAudioRecorder: @unchecked Sendable {
 
         let hfp = inputs.first { $0.portType == .bluetoothHFP }
         let builtIn = inputs.first { $0.portType == .builtInMic }
+        // Glasses mic only, by default: HFP when it exists. The manual "Use iPhone
+        // microphone" toggle (Diagnostics, defaults OFF) is the ONLY way onto the
+        // built-in mic. Display Audio Mode and the old phone-mic fallback no longer
+        // force the phone mic: a silent glasses mic must be visible as silence,
+        // not hidden behind phone audio.
         let chosen = Self.usePhoneMic ? (builtIn ?? hfp) : (hfp ?? builtIn)
 
         guard let chosen else {
@@ -231,7 +288,8 @@ final class GlassesAudioRecorder: @unchecked Sendable {
             }.joined(separator: ", "))
 
             if chosen.portType == .builtInMic && hfp != nil {
-                BridgeState.log("using \(chosen.portName): glasses mic goes silent while the camera streams")
+                // Only reachable via the manual "Use iPhone microphone" toggle.
+                BridgeState.log("using \(chosen.portName): manual iPhone-mic override is ON (glasses mic not used)")
             } else if hfp == nil {
                 // The audio analogue of Android's "degrade to video-only" rule.
                 // Demo-quality degradation, not a functional one (§11.3).
@@ -304,7 +362,7 @@ final class GlassesAudioRecorder: @unchecked Sendable {
         ))
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             BridgeState.log("!! input format is degenerate — is the session active?")
-            return
+            throw AudioSessionError.degenerateInputFormat
         }
 
         // Step 4 — converter to 16 kHz mono Int16 interleaved.
@@ -315,13 +373,13 @@ final class GlassesAudioRecorder: @unchecked Sendable {
             interleaved: true
         ) else {
             BridgeState.log("!! could not build target audio format")
-            return
+            throw AudioSessionError.targetFormatFailed
         }
         targetFormat = target
 
         guard let converter = AVAudioConverter(from: inputFormat, to: target) else {
             BridgeState.log("!! could not build AVAudioConverter from the live input format")
-            return
+            throw AudioSessionError.converterFailed
         }
         converter.sampleRateConverterQuality = AVAudioQuality.high.rawValue
         self.converter = converter
@@ -403,6 +461,16 @@ final class GlassesAudioRecorder: @unchecked Sendable {
                 // AVCaptureSession feeding the simulated camera, so video frames
                 // stop arriving while `stream state` still reads `.streaming`.
                 self.restartForRouteChange()
+            case .categoryChange, .override:
+                // One exception: opening the glasses web app disrupts the audio session
+                // via exactly these reasons, and the tap then sits on dead input.
+                // Restart once, and only if the mic is actually silent, so a
+                // healthy route change never loops: restartForRouteChange is
+                // debounced to 1 s and the silence gate above stops repeats.
+                if self.displayAudioMode && self.secondsSinceSound > 2 {
+                    BridgeState.log("display audio mode: route \(reason) with a silent mic — restarting")
+                    self.restartForRouteChange()
+                }
             default:
                 break
             }
@@ -475,7 +543,7 @@ final class GlassesAudioRecorder: @unchecked Sendable {
 
     // MARK: - Dead-input detection
     //
-    // Measured 2026-11-14: opening a web app on the Ray-Ban Display disrupts the phone's audio and the
+    // Measured 2026-11-14: opening a web app on the Ray-Ban Display disrupts the glasses audio session and the
     // engine keeps delivering buffers of exact zeros, "running" on a dead input. A real mic always has
     // some noise, so a few seconds of pure zeros means the input died; BridgeController restarts it.
 
